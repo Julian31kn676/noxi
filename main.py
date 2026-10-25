@@ -43,6 +43,7 @@ DEFAULTS = {
     "roam_chance": 0.5,
     "teleport_on_answer": True,
     "search_when_unsure": True,
+    "browser": "",  # в каком браузере открывать сайты: "хром", "яндекс", "опера"… или путь к exe; "" — как в Windows
     "anthropic_api_key": "",
     "model": "claude-opus-5-5",
     "wake_words": ["капри", "каприз", "капре", "кепри", "капли"],
@@ -399,7 +400,7 @@ class Capri(QObject):
                 self.say(CONFIG_ERROR)
             return
         self.config_mtime = mtime
-        for key in ("sites", "apps", "app_aliases", "search_when_unsure"):
+        for key in ("sites", "apps", "app_aliases", "search_when_unsure", "browser"):
             self.cfg[key] = fresh[key]
         self.actions.set_lists(self.cfg)
         log.info("config.json перечитан")

@@ -140,6 +140,63 @@ SKIP_WORDS = ("uninstall", "удален", "удалить", "деинсталл
               "license", "support", "поддержк", "feedback", "release notes", "website")
 
 
+# как браузеры называют вслух → по чему узнать в списке браузеров Windows (название ключа или exe)
+BROWSER_WORDS = [
+    (r"(гугл )?хром\w*|chrome", "chrome"),
+    (r"яндекс\w*|yandex", "yandex"),
+    (r"опер\w*|opera", "opera"),
+    (r"(фаер|файр|файер)фокс\w*|мозил+\w*|firefox", "firefox"),
+    (r"(майкрософт )?эдж\w*|edge", "edge"),
+    (r"брейв\w*|brave", "brave"),
+    (r"вивальди|vivaldi", "vivaldi"),
+]
+BROWSER_NAMES = {"chrome": "Google Chrome", "yandex": "Яндекс Браузер", "opera": "Opera", "firefox": "Firefox",
+                 "edge": "Edge", "brave": "Brave", "vivaldi": "Vivaldi"}
+# «… в хроме», «… через яндекс браузер», «… в браузере опера» — только в конце фразы
+BROWSER_SUFFIX = re.compile(r"\s+(в|через)\s+(браузер\w*\s+)?(?P<b>" + "|".join(p for p, _ in BROWSER_WORDS)
+                            + r")(\s+браузер\w*)?$")
+
+
+def installed_browsers():
+    """{"chrome": путь к exe, ...} — браузеры из списка Windows («Приложения по умолчанию»)."""
+    import winreg
+    found = {}
+    for hive, path in ((winreg.HKEY_CURRENT_USER, r"SOFTWARE\Clients\StartMenuInternet"),
+                       (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Clients\StartMenuInternet"),
+                       (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Clients\StartMenuInternet")):
+        try:
+            key = winreg.OpenKey(hive, path)
+        except OSError:
+            continue
+        for i in range(winreg.QueryInfoKey(key)[0]):
+            name = winreg.EnumKey(key, i)
+            try:
+                cmd = winreg.QueryValue(key, name + r"\shell\open\command")
+            except OSError:
+                continue
+            m = re.match(r'^\s*"?([^"]+?\.exe)', cmd)
+            if not m or not os.path.isfile(m.group(1)):
+                continue
+            label = (name + " " + os.path.basename(m.group(1))).lower()
+            for _, k in BROWSER_WORDS:
+                if k in label or (k == "edge" and "msedge" in label):
+                    found.setdefault(k, m.group(1))
+    return found
+
+
+def find_browser(name):
+    """«хром» / «яндекс браузер» / путь к exe → путь к exe браузера или None, если такого нет."""
+    if not name:
+        return None
+    if os.path.isfile(name):
+        return name
+    n = norm(name)
+    for pattern, k in BROWSER_WORDS:
+        if re.fullmatch(rf"({pattern})( браузер\w*)?|браузер\w* ({pattern})", n):
+            return installed_browsers().get(k)
+    return None
+
+
 def installed_programs():
     """[(название, путь к exe)] из «Программ и компонентов» Windows: значок программы обычно и есть её exe."""
     import winreg
@@ -865,6 +922,7 @@ class Actions:
         self.base_dir = base_dir
         self.ai = ai
         self.save = save  # save(раздел, название, значение или None) → текст ошибки или None
+        self.browser_once = None  # браузер, названный в текущей команде («открой ютуб в хроме»)
         self.set_lists(cfg)
         self.index = AppIndex()
         threading.Thread(target=self.index.build, daemon=True).start()
@@ -1013,7 +1071,34 @@ class Actions:
                     best, best_i = s, i
         return best_i if best >= 0.6 else None
 
+    def web(self, url):
+        """Открыть адрес: в браузере из команды («… в хроме»), из настройки "browser" или в браузере
+        по умолчанию Windows."""
+        exe = find_browser(self.browser_once) or find_browser(self.cfg.get("browser"))
+        if exe:
+            subprocess.Popen([exe, url])
+        else:
+            webbrowser.open(url)
+
     def handle_one(self, c):
+        m = BROWSER_SUFFIX.search(c)
+        self.browser_once, missing = None, None
+        if m:  # «открой ютуб в хроме» — браузер только для этой команды
+            if find_browser(m.group("b")):
+                self.browser_once = m.group("b")
+            else:
+                missing = next((BROWSER_NAMES[k] for p, k in BROWSER_WORDS if re.fullmatch(p, m.group("b"))),
+                               m.group("b"))
+            c = c[:m.start()].strip()
+        try:
+            r = self._handle_one(c)
+        finally:
+            self.browser_once = None
+        if r and missing:
+            r.text = line("browser_missing", b=missing) + " " + r.text
+        return r
+
+    def _handle_one(self, c):
         for pattern, fn in self.routes:
             m = re.search(pattern, c)
             if m:
@@ -1089,7 +1174,7 @@ class Actions:
                      r"откуда|чем|чей|расскажи|объясни|скажи)\b", c):
             if not self.cfg.get("search_when_unsure", True):
                 return Reply(line("dont_know"))
-            webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote(cmd))
+            self.web("https://www.google.com/search?q=" + urllib.parse.quote(cmd))
             return Reply(line("search_q"))
         return Reply(line("unknown"))
 
@@ -1483,9 +1568,9 @@ class Actions:
         yt = re.search(r"(на|в) (ютубе|ютуб|youtube)", q)
         if yt:
             q = q.replace(yt.group(0), "").strip()
-            webbrowser.open("https://www.youtube.com/results?search_query=" + urllib.parse.quote(q))
+            self.web("https://www.youtube.com/results?search_query=" + urllib.parse.quote(q))
             return Reply(line("yt", q=q))
-        webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote(q))
+        self.web("https://www.google.com/search?q=" + urllib.parse.quote(q))
         return Reply(line("web", q=q))
 
     def open(self, c, m):
@@ -1512,16 +1597,16 @@ class Actions:
             return Reply(line("open", t=t))
 
         if t in self.sites:
-            webbrowser.open(self.sites[t])
+            self.web(self.sites[t])
             return Reply(line("open", t=t))
         close = difflib.get_close_matches(t, list(self.sites), n=1, cutoff=0.82)
         if close:
-            webbrowser.open(self.sites[close[0]])
+            self.web(self.sites[close[0]])
             return Reply(line("open", t=close[0]))
 
         domain = re.sub(r"\s*(точка|dot)\s*", ".", t).replace(" ", "")
         if re.fullmatch(r"[\w\-]+(\.[\w\-]+)*\.[a-zа-я]{2,}", domain):
-            webbrowser.open("https://" + domain)
+            self.web("https://" + domain)
             return Reply(line("open", t=domain))
 
         if not site_mode:
@@ -1540,7 +1625,7 @@ class Actions:
             ords = ["первое", "второе", "третье"]
             listed = ", ".join(f"{ords[i]} — {nm}" for i, nm in enumerate(names))
             return Reply(line("choose_app", t=listed), "ask")
-        webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote(t))
+        self.web("https://www.google.com/search?q=" + urllib.parse.quote(t))
         return Reply(line("site_unknown", t=t))
 
     def kill_process(self, c, m):
@@ -1709,13 +1794,13 @@ class Actions:
         q = m.group("q").strip()
         if re.search(r"\bобои\b", c):
             q = "обои " + q
-        webbrowser.open("https://www.google.com/search?tbm=isch&q=" + urllib.parse.quote(q))
+        self.web("https://www.google.com/search?tbm=isch&q=" + urllib.parse.quote(q))
         return Reply(line("images", q=q))
 
     def info(self, c, m):
         """Открывает поиск Google и вслух пересказывает начало статьи из Википедии, если она нашлась."""
         q = m.group("q").strip()
-        webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote(q))
+        self.web("https://www.google.com/search?q=" + urllib.parse.quote(q))
         summary = wiki_summary(q)
         if summary:
             return Reply(line("info", t=summary))
@@ -1731,10 +1816,10 @@ class Actions:
         search = q + (" песня" if re.match(r"песн|трек", kind) else "")
         found = youtube_first(search)
         if not found:  # не вышло достать первое видео — хотя бы откроем поиск
-            webbrowser.open("https://www.youtube.com/results?search_query=" + urllib.parse.quote(search))
+            self.web("https://www.youtube.com/results?search_query=" + urllib.parse.quote(search))
             return Reply(line("yt", q=q))
         vid, title = found
-        webbrowser.open(f"https://www.youtube.com/watch?v={vid}")
+        self.web(f"https://www.youtube.com/watch?v={vid}")
         threading.Thread(target=ensure_playing, daemon=True).start()
         title = re.sub(r"\s+", " ", title).strip()
         if len(title) > 70:
@@ -1806,10 +1891,9 @@ class Actions:
         ImageGrab.grab(all_screens=True).save(path)
         return Reply(line("screenshot"))
 
-    @staticmethod
-    def _run(target):
+    def _run(self, target):
         if target.startswith(("http://", "https://")):
-            webbrowser.open(target)
+            self.web(target)
             return
         try:
             os.startfile(target)
