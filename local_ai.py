@@ -15,6 +15,7 @@ log = logging.getLogger("capri")
 URL = "http://127.0.0.1:11434"
 NO_WINDOW = 0x08000000
 SEARCH_MARK = "ПОИСК"
+NO_THINKING = "Сразу дай готовый ответ от лица Капри. Без рассуждений, без анализа вопроса, без «пользователь хочет»."
 
 SYSTEM = f"""{CHARACTER}
 
@@ -105,6 +106,22 @@ def drop_repeats(answer, history):
     return " ".join(kept) or answer
 
 
+# рассуждения без меток: «думающие» модели (qwen3:4b = qwen3:4b-thinking) пишут их прямо в ответ
+REASONING = re.compile(r"^\W*(okay|ok,|alright|let me|the user|first,|хорошо,? (пользователь|мне|нужно|давай)|"
+                       r"пользователь (спрашива|хочет|проси|пиш|говор)|мне нужно|нужно ответить|"
+                       r"итак,? (пользователь|мне|нужно)|сначала (мне |нужно |надо )|давайте? (подума|разбер))",
+                       re.IGNORECASE)
+
+
+def strip_reasoning(text):
+    """Убирает «мысли вслух»: блоки <think>…</think>, хвост до одинокого </think>
+    (у новых Qwen открывающей метки нет) и незакрытый <think> до конца."""
+    text = re.sub(r"<think>.*?</think>", "", text, flags=re.S)
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    return re.sub(r"<think>.*", "", text, flags=re.S).strip()
+
+
 def _post(path, payload, timeout):
     req = urllib.request.Request(URL + path, data=json.dumps(payload).encode("utf-8"),
                                  headers={"Content-Type": "application/json"})
@@ -150,8 +167,14 @@ class LocalAI:
             "keep_alive": "10m",
             "options": {"num_predict": max_tokens, "temperature": 0.6, "repeat_penalty": 1.15},
         }, 120)
-        text = resp.get("message", {}).get("content", "")
-        return re.sub(r"<think>.*?</think>", "", text, flags=re.S).strip()
+        text = strip_reasoning(resp.get("message", {}).get("content", ""))
+        if REASONING.search(text):
+            # модель всё равно «думает» вслух — переспрашиваем, а если опять, ответа нет
+            log.info("Модель %s рассуждает вслух вместо ответа", self.model)
+            if messages[-1].get("content", "").startswith(NO_THINKING):
+                return ""
+            return self._chat(messages + [{"role": "system", "content": NO_THINKING}], max_tokens)
+        return text
 
     def ask(self, question):
         """Текст ответа или None, если лучше открыть поиск."""
