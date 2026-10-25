@@ -1,22 +1,13 @@
 @echo off
-chcp 65001 >nul
 cd /d "%~dp0"
-set "PY=python"
+set "PY="
 where py >nul 2>nul && set "PY=py"
-echo [Capri] Устанавливаю библиотеки...
-%PY% -m pip install -r requirements.txt
-if errorlevel 1 (
-  echo.
-  echo [Capri] Библиотеки не установились. Проверь интернет и что Python поставлен с галочкой «Add python.exe to PATH».
+if not defined PY where python >nul 2>nul && set "PY=python"
+if not defined PY (
+  echo [Capri] Python not found. Install Python 3.11+ from https://www.python.org/downloads/
+  echo         and tick "Add python.exe to PATH" during installation.
   pause
   exit /b 1
 )
-echo.
-%PY% tools\download_model.py
-if errorlevel 1 (
-  pause
-  exit /b 1
-)
-echo.
-echo [Capri] Готово. Запускай run.bat
+%PY% tools\install.py
 pause
