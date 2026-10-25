@@ -213,6 +213,8 @@ class Capri(QObject):
                                   re.IGNORECASE)
         self.ai = AI(cfg)
         self.local = LocalAI(cfg) if cfg.get("local_ai") else None
+        if self.local:
+            self.local.on_model_change = self._remember_model
         self.actions = Actions(cfg, BASE, self.ai, save=save_entry)
         self.config_mtime = self._config_mtime()
         self.actions.local = self.local
@@ -370,6 +372,11 @@ class Capri(QObject):
 
     def on_listener_error(self, err, kind="mic"):
         self.jobs.put(("say", line("model_broken" if kind == "model" else "no_mic")))
+
+    def _remember_model(self, name):
+        """Ollama нашла другую скачанную модель — записываем её, чтобы не искать при каждом запуске."""
+        self.cfg["local_model"] = name
+        save_setting("local_model", name)
 
     # ----- config.json на лету -----
     @staticmethod

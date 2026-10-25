@@ -137,7 +137,47 @@ PROTECTED_PROCS = {"explorer", "python", "pythonw", "svchost", "csrss", "winlogo
                    "searchhost", "startmenuexperiencehost", "shellexperiencehost", "textinputhost", "ollama",
                    "ollama app", "conhost", "audiodg"}
 SKIP_WORDS = ("uninstall", "удален", "удалить", "деинсталл", "readme", "help", "справка", "documentation",
-              "license")
+              "license", "support", "поддержк", "feedback", "release notes", "website")
+
+
+def installed_programs():
+    """[(название, путь к exe)] из «Программ и компонентов» Windows: значок программы обычно и есть её exe."""
+    import winreg
+    out = []
+    roots = [(winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"),
+             (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"),
+             (winreg.HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall")]
+    for hive, path in roots:
+        try:
+            key = winreg.OpenKey(hive, path)
+        except OSError:
+            continue
+        for i in range(winreg.QueryInfoKey(key)[0]):
+            try:
+                sub = winreg.OpenKey(key, winreg.EnumKey(key, i))
+                name = str(winreg.QueryValueEx(sub, "DisplayName")[0])
+            except OSError:
+                continue
+            values = {}
+            for field in ("DisplayIcon", "InstallLocation", "UninstallString"):
+                try:
+                    values[field] = str(winreg.QueryValueEx(sub, field)[0])
+                except OSError:
+                    values[field] = ""
+            exe = re.sub(r",\s*-?\d+$", "", values["DisplayIcon"]).strip().strip('"')
+            base = os.path.basename(exe).lower()
+            if exe.lower().endswith(".exe") and "unins" not in base and "setup" not in base and os.path.isfile(exe):
+                out.append((norm(name), exe))
+                continue
+            # значок — деинсталлятор (так у Steam): ищем рядом exe с названием программы, steam → steam.exe
+            folder = values["InstallLocation"].strip().strip('"')
+            if not os.path.isdir(folder):
+                m = re.match(r'^"?([^"]+?\.exe)', values["UninstallString"] or exe)
+                folder = os.path.dirname(m.group(1)) if m else ""
+            guess = os.path.join(folder, re.sub(r"[^\w\-]", "", name) + ".exe") if folder else ""
+            if guess and os.path.isfile(guess):
+                out.append((norm(name), guess))
+    return out
 
 
 class AppIndex:
@@ -170,6 +210,10 @@ class AppIndex:
                             # (установщик Squirrel) запуск по идентификатору ничего не открывает
                             if items.get(name, ("appid",))[0] != "file":
                                 items[name] = ("file", os.path.join(root, f))
+        # установленные программы из реестра — на случай, если ярлыка в «Пуске» нет (бывает у Steam)
+        for name, exe in installed_programs():
+            if name not in items and not any(w in name for w in SKIP_WORDS):
+                items[name] = ("file", exe)
         with self.lock:
             self.items = items
         self.ready.set()

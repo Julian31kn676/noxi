@@ -7,6 +7,7 @@ import os
 import random
 import re
 import subprocess
+import time
 import urllib.request
 
 from persona import CHARACTER, SPEECH_RULES
@@ -129,22 +130,49 @@ def _post(path, payload, timeout):
         return json.loads(r.read().decode("utf-8"))
 
 
+# какую модель взять, если указанной в настройках нет: сначала проверенные, «думающие» — в последнюю очередь
+PREFERRED = ["qwen3:14b", "qwen3:8b", "qwen3:4b-instruct", "qwen3:4b-instruct-2507", "qwen3:1.7b", "qwen2.5",
+             "gemma3", "llama3"]
+
+
+def has_model(names, model):
+    return any(n == model or n.startswith(model + ":") for n in names)  # «qwen3» = «qwen3:latest»
+
+
+def pick_model(names):
+    """Из скачанных моделей — подходящая для болтовни или None."""
+    chat = [n for n in names if not re.search(r"embed|vision|coder|ocr", n)]
+    for p in PREFERRED:
+        for n in chat:
+            if n == p or n.startswith(p + ":") or n.startswith(p + "-"):
+                return n
+    plain = [n for n in chat if "thinking" not in n and n not in ("qwen3:4b", "qwen3:4b-q4_K_M")]
+    return (plain or chat or [None])[0]
+
+
 class LocalAI:
     def __init__(self, cfg):
         self.model = cfg.get("local_model", "qwen3:8b")
         self.history = []
+        self.on_model_change = None  # main записывает новую модель в config.json
 
-    def running(self):
+    @staticmethod
+    def installed():
+        """Названия скачанных моделей или None, если Ollama не отвечает."""
         try:
             with urllib.request.urlopen(URL + "/api/tags", timeout=1.5) as r:
-                names = [m["name"] for m in json.loads(r.read().decode("utf-8")).get("models", [])]
-            return any(n == self.model or n.startswith(self.model + ":") for n in names)
+                return [m["name"] for m in json.loads(r.read().decode("utf-8")).get("models", [])]
         except Exception:
-            return False
+            return None
+
+    def running(self):
+        return has_model(self.installed() or [], self.model)
 
     def start_server(self):
-        """Запускает Ollama, если она не запущена, и заранее грузит модель в память."""
-        if not self.running():
+        """Запускает Ollama, если она не запущена, и заранее грузит модель в память. Если указанной
+        в настройках модели нет, а другая скачана — переключается на неё и запоминает."""
+        names = self.installed()
+        if names is None:
             exe = os.path.join(os.environ.get("LOCALAPPDATA", ""), "Programs", "Ollama", "ollama.exe")
             try:
                 subprocess.Popen([exe if os.path.exists(exe) else "ollama", "serve"],
@@ -152,6 +180,23 @@ class LocalAI:
             except OSError:
                 log.info("Ollama не установлена")
                 return
+            for _ in range(20):  # сервер поднимается пару секунд
+                time.sleep(0.5)
+                names = self.installed()
+                if names is not None:
+                    break
+            if names is None:
+                log.info("Ollama не отвечает")
+                return
+        if not has_model(names, self.model):
+            other = pick_model(names)
+            if not other:
+                log.info("В Ollama нет ни одной модели — запусти setup_ai.bat или: ollama pull %s", self.model)
+                return
+            log.info("Модели %s нет, беру скачанную %s", self.model, other)
+            self.model = other
+            if self.on_model_change:
+                self.on_model_change(other)
         try:
             _post("/api/generate", {"model": self.model, "prompt": "", "keep_alive": "10m"}, 120)
             log.info("Локальная модель %s загружена", self.model)
