@@ -40,7 +40,7 @@ def main():
         return 0
     os.makedirs(MODELS, exist_ok=True)
     tmp = os.path.join(MODELS, "ru.zip")
-    print("[Capri] Скачиваю модель распознавания речи (~45 МБ)...")
+    print("[Capri] Скачиваю модель распознавания речи (~45 МБ). Для этого нужен включённый VPN...")
     for attempt in range(3):
         try:
             download(tmp)
@@ -48,7 +48,7 @@ def main():
         except Exception as e:
             print(f"  не получилось ({e}), попытка {attempt + 2} из 3..." if attempt < 2 else f"  ошибка: {e}")
     else:
-        print("[Capri] Не удалось скачать модель. Проверь интернет и запусти setup.bat ещё раз.")
+        print("[Capri] Не удалось скачать модель. Включи VPN и запусти setup.bat ещё раз.")
         print(f"  Или скачай вручную: {URL}")
         print(f"  и распакуй в папку: {MODELS}")
         return 1
