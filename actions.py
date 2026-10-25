@@ -176,12 +176,22 @@ class AppIndex:
         log.info("Найдено приложений: %d", len(items))
 
     @staticmethod
-    def _skeleton(s):
-        """Согласные без гласных: «cloud», «claude», «клод» → «kld». Ловит созвучные названия."""
-        s = translit(s.lower())
+    def _sound(s):
+        s = re.sub(r"\s", "", translit(s.lower()))
         for a, b in (("ph", "f"), ("ck", "k"), ("c", "k"), ("q", "k"), ("w", "v"), ("x", "ks"), ("z", "s")):
             s = s.replace(a, b)
-        return re.sub(r"[aeiouy\s]", "", s)
+        return s
+
+    @staticmethod
+    def _skeleton(s):
+        """Согласные без гласных: «cloud», «claude», «клод» → «kld». Ловит созвучные названия."""
+        return re.sub(r"[aeiouy]", "", AppIndex._sound(s))
+
+    @staticmethod
+    def sounds_like(a, b):
+        """Созвучны, если совпадают согласные и первый звук: «роблокс» = «roblox», но «запрет» ≠ «aseprite»."""
+        sk = AppIndex._skeleton(a)
+        return len(sk) >= 3 and sk == AppIndex._skeleton(b) and AppIndex._sound(a)[:1] == AppIndex._sound(b)[:1]
 
     def candidates(self, query, aliases, limit=4):
         """Подходящие приложения, лучшие первыми: [(оценка, название, цель)]."""
@@ -202,10 +212,9 @@ class AppIndex:
                 else:
                     score = difflib.SequenceMatcher(None, v, name).ratio()
                     first = name.split()[0] if name.split() else name
-                    sk = self._skeleton(v)
-                    if len(sk) >= 3 and sk == self._skeleton(name):
+                    if self.sounds_like(v, name):
                         score = max(score, 0.97)  # звучит как всё название: «роблокс» = «roblox»
-                    elif len(sk) >= 3 and sk == self._skeleton(first):
+                    elif self.sounds_like(v, first):
                         score = max(score, 0.86)  # звучит так же: «клод/cloud» ~ «claude»
                 best = max(best, score)
             if best >= 0.72 and best > scored.get(name, (0,))[0]:
@@ -946,8 +955,7 @@ class Actions:
         for i, (name, _) in enumerate(options):
             for v in {words, translit(words)}:
                 s = 1.0 if v and v in name else difflib.SequenceMatcher(None, v, name).ratio()
-                sk = AppIndex._skeleton(v)
-                if len(sk) >= 3 and sk == AppIndex._skeleton(name.split()[0]):
+                if AppIndex.sounds_like(v, name.split()[0] if name.split() else name):
                     s = max(s, 0.86)
                 if s > best:
                     best, best_i = s, i
@@ -967,10 +975,12 @@ class Actions:
         return None
 
     def fallback(self, cmd, force_search=False):
-        """Без ИИ: вопрос ищем в Google, остальное — «не знаю команды»."""
+        """Без ИИ: вопрос ищем в Google (если search_when_unsure не выключен), остальное — «не знаю команды»."""
         c = norm(cmd)
         if force_search or re.match(r"^(что|кто|как|какой|какая|какое|какие|почему|зачем|сколько|где|когда|куда|"
                      r"откуда|чем|чей|расскажи|объясни|скажи)\b", c):
+            if not self.cfg.get("search_when_unsure", True):
+                return Reply(line("dont_know"))
             webbrowser.open("https://www.google.com/search?q=" + urllib.parse.quote(cmd))
             return Reply(line("search_q"))
         return Reply(line("unknown"))
@@ -1468,7 +1478,7 @@ class Actions:
                     s = 0.9  # «steam» не считается совпадением для «steamclienthelper»
                 else:
                     s = difflib.SequenceMatcher(None, v, name).ratio()
-                    if len(AppIndex._skeleton(v)) >= 3 and AppIndex._skeleton(v) == AppIndex._skeleton(name):
+                    if AppIndex.sounds_like(v, name):
                         s = max(s, 0.86)
                 score = max(score, s)
             if score < 0.95 and words:

@@ -42,6 +42,7 @@ DEFAULTS = {
     "chatter_max_minutes": 40,
     "roam_chance": 0.5,
     "teleport_on_answer": True,
+    "search_when_unsure": True,
     "anthropic_api_key": "",
     "model": "claude-opus-5-5",
     "wake_words": ["капри", "каприз", "капре", "кепри", "капли"],
@@ -93,28 +94,41 @@ DEFAULTS = {
 def save_setting(key, value):
     """Записать одну настройку в config.json, не трогая остальные."""
     try:
-        with open(CONFIG_PATH, encoding="utf-8") as f:
+        with open(CONFIG_PATH, encoding="utf-8-sig") as f:  # Блокнот иногда сохраняет с BOM
             data = json.load(f)
-    except Exception:
+    except FileNotFoundError:
         data = {}
+    except Exception:  # файл с ошибкой — не перезаписываем, иначе пропадут правки пользователя
+        log.exception("config.json с ошибкой, настройку %s не сохраняю", key)
+        return
     data[key] = value
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+CONFIG_ERROR = ""  # что сказать вслух, если config.json не прочитался
+
+
 def load_config():
+    global CONFIG_ERROR
     cfg = json.loads(json.dumps(DEFAULTS))
     if os.path.exists(CONFIG_PATH):
         try:
-            with open(CONFIG_PATH, encoding="utf-8") as f:
+            with open(CONFIG_PATH, encoding="utf-8-sig") as f:
                 user = json.load(f)
             for k, v in user.items():
                 if isinstance(v, dict) and isinstance(cfg.get(k), dict):
                     cfg[k].update(v)
                 else:
                     cfg[k] = v
+        except json.JSONDecodeError as e:
+            log.error("config.json с ошибкой (строка %d, символ %d: %s), использую настройки по умолчанию",
+                      e.lineno, e.colno, e.msg)
+            CONFIG_ERROR = (f"В config.json ошибка в строке {e.lineno}, я его не прочитала и работаю "
+                            "со стандартными настройками. Проверь там кавычки, запятые и двойные слеши в путях.")
         except Exception:
-            log.exception("config.json повреждён, использую настройки по умолчанию")
+            log.exception("config.json не прочитался, использую настройки по умолчанию")
+            CONFIG_ERROR = "Не смогла прочитать config.json, работаю со стандартными настройками."
     else:
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(DEFAULTS, f, ensure_ascii=False, indent=2)
@@ -197,6 +211,8 @@ class Capri(QObject):
             return
         # вступление: анимация capri + приветствие
         self.jobs.put(("say", line("greet") if self.cfg.get("greet_on_start") else "", "capri"))
+        if CONFIG_ERROR:
+            self.jobs.put(("say", CONFIG_ERROR))
         if self.cfg.get("chatter"):
             threading.Thread(target=self._chatter_loop, daemon=True).start()
 
