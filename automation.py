@@ -312,6 +312,17 @@ def foreground_process():
         return ""
 
 
+def window_exe(hwnd):
+    """Полный путь к программе, которой принадлежит окно, или None."""
+    import psutil
+    pid = wintypes.DWORD()
+    u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    try:
+        return psutil.Process(pid.value).exe()
+    except Exception:
+        return None
+
+
 def input_text(text):
     """Ввести текст в активное окно: в мессенджерах — вставкой (там посимвольная печать теряет буквы),
     в остальных программах — печатью."""

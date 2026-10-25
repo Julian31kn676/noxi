@@ -18,15 +18,30 @@ log = logging.getLogger("capri")
 RATE = 16000
 
 
+def _model_complete(folder):
+    return os.path.isfile(os.path.join(folder, "am", "final.mdl"))
+
+
 def ascii_model_path(path):
-    """Vosk не открывает пути с кириллицей — копируем модель в ASCII-путь."""
+    """Vosk не открывает пути с кириллицей (ошибка «синтаксическая ошибка в имени файла») — копируем
+    модель туда, где путь латиницей. Если и имя пользователя Windows русское, его папки не подходят,
+    поэтому дальше пробуем общие папки C:\\ProgramData и C:\\Users\\Public."""
     if path.isascii():
         return path
-    target = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "Capri", "model")
-    if target.isascii():
-        if not os.path.exists(target):
-            shutil.copytree(path, target)
-        return target
+    bases = [os.environ.get("LOCALAPPDATA", ""), os.environ.get("PROGRAMDATA", r"C:\ProgramData"),
+             os.environ.get("PUBLIC", r"C:\Users\Public"), tempfile.gettempdir()]
+    for base in bases:
+        target = os.path.join(base, "Capri", os.path.basename(path.rstrip("\\/")))
+        if not base or not target.isascii():
+            continue
+        try:
+            if not _model_complete(target):  # копия могла оборваться в прошлый раз
+                shutil.rmtree(target, ignore_errors=True)
+                shutil.copytree(path, target)
+            log.info("Модель распознавания скопирована в %s (в исходном пути есть кириллица)", target)
+            return target
+        except OSError as e:
+            log.info("Не удалось скопировать модель в %s: %s", target, e)
     return path
 
 
@@ -102,7 +117,7 @@ class Listener(threading.Thread):
             rec = vosk.KaldiRecognizer(model, RATE)
         except Exception as e:
             log.exception("Модель распознавания не загрузилась")
-            self.on_error(str(e))
+            self.on_error(str(e), "model")
             return
         while True:
             self.switch.clear()

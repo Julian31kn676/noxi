@@ -249,6 +249,19 @@ def _urlbar(hwnd):
     return None, None
 
 
+def page_url(hwnd):
+    """Адрес любой открытой вкладки браузера (для «запомни этот сайт») или None."""
+    try:
+        _, vp = _urlbar(hwnd)
+        value = ((vp.CurrentValue or "") if vp else "").strip()
+    except Exception:
+        log.exception("Не удалось прочитать адрес вкладки")
+        return None
+    if not re.match(r"^(https?://)?[\w\-]+(\.[\w\-]+)*\.[a-zа-я]{2,}(:\d+)?(/\S*)?$", value, re.IGNORECASE):
+        return None
+    return value if value.startswith("http") else "https://" + value
+
+
 def browser_url(hwnd):
     """Адрес активной вкладки браузера — читаем адресную строку через UI Automation (без копирования)."""
     try:

@@ -809,14 +809,19 @@ def send_keys(keys):
 
 # ---------------- обработчик команд ----------------
 
+REMEMBER_RE = (r"^(запомни|сохрани|добавь)( мне| себе)? (?P<what>(этот |эту |это |текущ\w+ |открыт\w+ )?"
+               r"(сайт\w*|страниц\w*|вкладк\w*|ссылк\w*|программ\w*|приложени\w*|игр\w*))\s*(?P<name>.*)$")
+FORGET_RE = (r"^(забудь|удали|убери)( мой| мою| из памяти)? (?P<what>сайт\w*|страниц\w*|ссылк\w*|программ\w*|"
+             r"приложени\w*|игр\w*) (?P<name>.+)$")
+
+
 class Actions:
-    def __init__(self, cfg, base_dir, ai):
+    def __init__(self, cfg, base_dir, ai, save=None):
         self.cfg = cfg
         self.base_dir = base_dir
         self.ai = ai
-        self.sites = {norm(k): v for k, v in cfg.get("sites", {}).items()}
-        self.apps = {norm(k): v for k, v in cfg.get("apps", {}).items()}
-        self.aliases = {norm(k): v for k, v in cfg.get("app_aliases", {}).items()}
+        self.save = save  # save(раздел, название, значение или None) → текст ошибки или None
+        self.set_lists(cfg)
         self.index = AppIndex()
         threading.Thread(target=self.index.build, daemon=True).start()
         self.pending = None
@@ -829,6 +834,8 @@ class Actions:
             (r"^(спрячься|скройся|исчезни|пока|отбой|свободна)\b|"
              r"^(уйди|уходи|убирайся|свали|сгинь|испарись|скрой себя|убери себя)\b|"
              r"(уйди|уходи|убирайся|свали|пропади|исчезни) (с|из) (экрана|монитора|глаз)", self.hide),
+            (REMEMBER_RE, self.remember_cmd),
+            (FORGET_RE, self.forget_cmd),
             (r"помаши|помахай|махни|помаши ручкой|поздоровайся", self.wave),
             (r"погуляй|прогуляйся|пройдись|прогулк", self.roam),
             (r"что ты (умеешь|можешь)|как\w* (у тебя )?команд|(назови|перечисли|скажи) (\S+ )?команд|"
@@ -933,7 +940,8 @@ class Actions:
             if re.match(r"^(никак\w*|ни одно|ни то|отмена|не надо|нет|ничего)\b", c):
                 return Reply(line("cancel"))
             # ответ не про выбор — значит, это новая команда
-        steps = automation.split_chain(c)
+        # «запомни … как X и Y» — название целиком, не цепочка команд
+        steps = None if re.match(REMEMBER_RE, c) or re.match(FORGET_RE, c) else automation.split_chain(c)
         if steps:
             try:
                 return self.run_chain(steps)
@@ -973,6 +981,62 @@ class Actions:
                 if r:
                     return r
         return None
+
+    # --- свои сайты и программы ---
+    def set_lists(self, cfg):
+        """Сайты, программы и названия из настроек — при запуске и когда config.json поменяли."""
+        self.sites = {norm(k): v for k, v in cfg.get("sites", {}).items()}
+        self.apps = {norm(k): v for k, v in cfg.get("apps", {}).items()}
+        self.aliases = {norm(k): v for k, v in cfg.get("app_aliases", {}).items()}
+
+    def remember(self, section, name, target):
+        """Записать сайт/программу (section "sites" / "apps") в config.json и сразу начать её узнавать.
+        target=None — забыть. Возвращает текст ошибки или None."""
+        name = norm(name)
+        err = self.save(section, name, target) if self.save else None
+        if err:
+            return err
+        book = self.sites if section == "sites" else self.apps
+        stored = self.cfg.setdefault(section, {})
+        if target is None:
+            book.pop(name, None)
+            stored.pop(name, None)
+        else:
+            book[name] = target
+            stored[name] = target
+        return None
+
+    def remember_cmd(self, c, m):
+        """«запомни этот сайт как музыка» — адрес открытой вкладки; «запомни эту программу как запрет» —
+        программа, окно которой сейчас на экране."""
+        name = re.sub(r"^(как|под названием|под именем|с названием|назови)\s+", "", (m.group("name") or "").strip())
+        name = name.strip(" «»\"")
+        site = re.search(r"(сайт|страниц|вкладк|ссылк)", m.group("what"))
+        if not name:
+            return Reply(line("remember_noname", what="этот сайт" if site else "эту программу"))
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if site:
+            url = media.page_url(hwnd)
+            if not url:
+                return Reply(line("remember_nosite"))
+            err = self.remember("sites", name, url)
+            short = re.sub(r"^https?://(www\.)?", "", url).split("/")[0]
+            return Reply(line("remember_fail", e=err) if err else line("remember_site", t=name, url=short))
+        exe = automation.window_exe(hwnd)
+        base = os.path.splitext(os.path.basename(exe or ""))[0].lower()
+        if not exe or base in PROTECTED_PROCS or base == "applicationframehost":
+            return Reply(line("remember_noapp"))
+        err = self.remember("apps", name, exe)
+        return Reply(line("remember_fail", e=err) if err else line("remember_app", t=name, app=base))
+
+    def forget_cmd(self, c, m):
+        name = norm(m.group("name"))
+        section = "sites" if re.search(r"(сайт|страниц|вкладк|ссылк)", m.group("what")) else "apps"
+        book = self.sites if section == "sites" else self.apps
+        if name not in book:
+            return Reply(line("forget_missing", t=name))
+        err = self.remember(section, name, None)
+        return Reply(line("remember_fail", e=err) if err else line("forget_ok", t=name))
 
     def fallback(self, cmd, force_search=False):
         """Без ИИ: вопрос ищем в Google (если search_when_unsure не выключен), остальное — «не знаю команды»."""

@@ -91,19 +91,48 @@ DEFAULTS = {
 }
 
 
-def save_setting(key, value):
-    """Записать одну настройку в config.json, не трогая остальные."""
+def _config_blank():
+    """config.json нет или он пустой (всё стёрли) — такой можно спокойно создать заново."""
     try:
-        with open(CONFIG_PATH, encoding="utf-8-sig") as f:  # Блокнот иногда сохраняет с BOM
-            data = json.load(f)
+        with open(CONFIG_PATH, encoding="utf-8-sig") as f:
+            return not f.read().strip()
     except FileNotFoundError:
-        data = {}
-    except Exception:  # файл с ошибкой — не перезаписываем, иначе пропадут правки пользователя
-        log.exception("config.json с ошибкой, настройку %s не сохраняю", key)
-        return
-    data[key] = value
+        return True
+
+
+def _edit_config(change):
+    """Прочитать config.json, применить change(data) и записать. Файл с ошибкой не перезаписываем —
+    иначе пропадут правки пользователя. Возвращает текст ошибки или None."""
+    try:
+        if _config_blank():
+            data = {}
+        else:
+            with open(CONFIG_PATH, encoding="utf-8-sig") as f:  # Блокнот иногда сохраняет с BOM
+                data = json.load(f)
+    except Exception:
+        log.exception("config.json с ошибкой, не записываю")
+        return "в config.json ошибка. Исправь её или удали файл, он создастся заново."
+    change(data)
     with open(CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
+    return None
+
+
+def save_setting(key, value):
+    """Записать одну настройку в config.json, не трогая остальные."""
+    _edit_config(lambda data: data.__setitem__(key, value))
+
+
+def save_entry(section, name, value):
+    """Свой сайт или программа: section "sites"/"apps". value=None — убрать; встроенные записи
+    убираются пометкой null, иначе вернулись бы из настроек по умолчанию."""
+    def change(data):
+        entries = data.setdefault(section, {})
+        if value is None and name not in DEFAULTS.get(section, {}):
+            entries.pop(name, None)
+        else:
+            entries[name] = value
+    return _edit_config(change)
 
 
 CONFIG_ERROR = ""  # что сказать вслух, если config.json не прочитался
@@ -111,14 +140,19 @@ CONFIG_ERROR = ""  # что сказать вслух, если config.json не
 
 def load_config():
     global CONFIG_ERROR
+    CONFIG_ERROR = ""
     cfg = json.loads(json.dumps(DEFAULTS))
-    if os.path.exists(CONFIG_PATH):
+    if not _config_blank():
         try:
             with open(CONFIG_PATH, encoding="utf-8-sig") as f:
                 user = json.load(f)
             for k, v in user.items():
                 if isinstance(v, dict) and isinstance(cfg.get(k), dict):
-                    cfg[k].update(v)
+                    for name, value in v.items():  # null — убранная встроенная запись
+                        if value is None:
+                            cfg[k].pop(name, None)
+                        else:
+                            cfg[k][name] = value
                 else:
                     cfg[k] = v
         except json.JSONDecodeError as e:
@@ -129,7 +163,8 @@ def load_config():
         except Exception:
             log.exception("config.json не прочитался, использую настройки по умолчанию")
             CONFIG_ERROR = "Не смогла прочитать config.json, работаю со стандартными настройками."
-    else:
+    else:  # файла нет или его содержимое стёрли — создаём заново со стандартными настройками
+        log.info("config.json пустой или удалён, создаю заново")
         with open(CONFIG_PATH, "w", encoding="utf-8") as f:
             json.dump(DEFAULTS, f, ensure_ascii=False, indent=2)
     return cfg
@@ -178,7 +213,8 @@ class Capri(QObject):
                                   re.IGNORECASE)
         self.ai = AI(cfg)
         self.local = LocalAI(cfg) if cfg.get("local_ai") else None
-        self.actions = Actions(cfg, BASE, self.ai)
+        self.actions = Actions(cfg, BASE, self.ai, save=save_entry)
+        self.config_mtime = self._config_mtime()
         self.actions.local = self.local
         self.speaker = Speaker(cfg)
         self.jobs = queue.Queue()
@@ -332,8 +368,34 @@ class Capri(QObject):
         self.awake_until = 0
         self.jobs.put(("voice", cmd, audio, woke))
 
-    def on_listener_error(self, err):
-        self.jobs.put(("say", line("no_mic")))
+    def on_listener_error(self, err, kind="mic"):
+        self.jobs.put(("say", line("model_broken" if kind == "model" else "no_mic")))
+
+    # ----- config.json на лету -----
+    @staticmethod
+    def _config_mtime():
+        try:
+            return os.path.getmtime(CONFIG_PATH)
+        except OSError:
+            return None
+
+    def reload_config_if_changed(self, speak=True):
+        """Правки config.json (сайты, программы, названия) подхватываются без перезапуска.
+        speak=False — из окна в трее: там говорить нельзя (речь блокирует окно)."""
+        mtime = self._config_mtime()
+        if mtime == self.config_mtime:
+            return
+        fresh = load_config()
+        if CONFIG_ERROR:  # с ошибкой — работаем как было и говорим, где ошибка
+            if speak:
+                self.config_mtime = mtime
+                self.say(CONFIG_ERROR)
+            return
+        self.config_mtime = mtime
+        for key in ("sites", "apps", "app_aliases", "search_when_unsure"):
+            self.cfg[key] = fresh[key]
+        self.actions.set_lists(self.cfg)
+        log.info("config.json перечитан")
 
     # ----- кнопки -----
     # ----- микрофон -----
@@ -440,6 +502,7 @@ class Capri(QObject):
         log.info("Команда: %s", cmd)
         self.mode.emit("thinking", 0.0)
         self.subtitle.emit("> " + cmd)
+        self.reload_config_if_changed()
 
         reply = self.actions.handle(cmd)
         if reply is not None and reply.action in ("mic_info", "mic_next"):
@@ -538,10 +601,22 @@ def main():
         if ok and text.strip():
             capri.text_command(text.strip())
 
+    entries = []  # окно держим, пока открыто (иначе его соберёт сборщик мусора)
+
+    def open_entries():
+        from entries_dialog import EntriesDialog
+        capri.reload_config_if_changed(speak=False)
+        dlg = EntriesDialog(capri.actions)
+        entries[:] = [dlg]
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
+
     menu = QMenu()
     for title, fn in (("Позвать Капри", capri.call_from_click),
                       ("Замолчать", capri.interrupt),
                       ("Написать команду…", ask_text),
+                      ("Мои сайты и программы…", open_entries),
                       ("Проверить ПК", lambda: capri.text_command("проверь компьютер")),
                       ("Спрятать", avatar.vanish),
                       ("MIC", None),
