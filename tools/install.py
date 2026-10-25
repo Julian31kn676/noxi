@@ -17,7 +17,7 @@ def main():
     print(f"[Capri] Python {sys.version.split()[0]}")
     if sys.version_info >= (3, 15):
         print("[Capri] Внимание: с Python 3.15 и новее голос Капри не работает, будет голос Windows.")
-        print("        Поставь Python 3.13: https://www.python.org/downloads/windows/")
+        print("        Поставь Python 3.13: https://www.python.org/ftp/python/3.13.17/python-3.13.17-amd64.exe")
     print("[Capri] Устанавливаю библиотеки...", flush=True)
     r = subprocess.run([sys.executable, "-m", "pip", "install", "-r", os.path.join(BASE, "requirements.txt")])
     if r.returncode:

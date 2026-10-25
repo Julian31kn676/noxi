@@ -62,7 +62,8 @@
 **Нужно:** Windows 10 или 11, микрофон, интернет на время установки.
 
 ### 1. Установи Python
-Скачай **Python 3.13** (подойдут 3.11–3.14): https://www.python.org/downloads/windows/
+Скачай **Python 3.13**: [установщик для Windows (64-bit)](https://www.python.org/ftp/python/3.13.17/python-3.13.17-amd64.exe).
+Подойдут и 3.11–3.14, все версии — на https://www.python.org/downloads/windows/
 С Python 3.15 и новее голос Капри пока не работает. Если стоит только 3.15, `setup.bat` сам доставит 3.13 рядом.
 При установке **обязательно поставь галочку «Add python.exe to PATH»**.
 

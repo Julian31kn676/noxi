@@ -9,7 +9,7 @@ py install 3.13
 call :pick
 %PY% -c "import sys; sys.exit(sys.version_info >= (3, 15))" && goto install
 echo.
-echo [Capri] Please install Python 3.13 manually: https://www.python.org/downloads/windows/
+echo [Capri] Please install Python 3.13 manually: https://www.python.org/ftp/python/3.13.17/python-3.13.17-amd64.exe
 echo         then run setup.bat again.
 pause
 exit /b 1
@@ -20,7 +20,7 @@ pause
 exit /b
 
 :nopython
-echo [Capri] Python not found. Install Python 3.13 from https://www.python.org/downloads/windows/
+echo [Capri] Python not found. Install Python 3.13 from https://www.python.org/ftp/python/3.13.17/python-3.13.17-amd64.exe
 echo         and tick "Add python.exe to PATH" during installation.
 pause
 exit /b 1
