@@ -29,6 +29,7 @@ CONFIG_PATH = os.path.join(BASE, "config.json")
 logging.basicConfig(filename=os.path.join(BASE, "capri.log"), level=logging.INFO, encoding="utf-8",
                     format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("capri")
+log.info("Python %s", sys.version.split()[0])
 
 DEFAULTS = {
     "enable_ai": False,

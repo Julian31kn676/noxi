@@ -4,7 +4,7 @@
 
 <p align="center">
   <img alt="Windows 10/11" src="https://img.shields.io/badge/Windows-10%20%7C%2011-0a0612?style=for-the-badge&logo=windows&logoColor=00f0ff">
-  <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-0a0612?style=for-the-badge&logo=python&logoColor=28ff96">
+  <img alt="Python 3.11–3.14" src="https://img.shields.io/badge/Python-3.11--3.14-0a0612?style=for-the-badge&logo=python&logoColor=28ff96">
   <img alt="Голос на русском" src="https://img.shields.io/badge/голос-по--русски-ff2260?style=for-the-badge">
   <img alt="Офлайн" src="https://img.shields.io/badge/работает-офлайн-28ff96?style=for-the-badge&labelColor=0a0612">
   <img alt="Бесплатно" src="https://img.shields.io/badge/бесплатно-без%20ключей-00f0ff?style=for-the-badge&labelColor=0a0612">
@@ -62,7 +62,8 @@
 **Нужно:** Windows 10 или 11, микрофон, интернет на время установки.
 
 ### 1. Установи Python
-Скачай Python 3.11 или новее: https://www.python.org/downloads/
+Скачай **Python 3.13** (подойдут 3.11–3.14): https://www.python.org/downloads/windows/
+С Python 3.15 и новее голос Капри пока не работает. Если стоит только 3.15, `setup.bat` сам доставит 3.13 рядом.
 При установке **обязательно поставь галочку «Add python.exe to PATH»**.
 
 ### 2. Скачай Капри
@@ -180,6 +181,7 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 |---|---|
 | Капри не слышит | выбери микрофон в меню трея → «Микрофон»; проверь доступ к микрофону в настройках конфиденциальности Windows |
 | «Не найдена модель распознавания речи» | запусти `setup.bat` ещё раз |
+| Голос не Капри, а стандартный голос Windows | нужен интернет; если стоит Python 3.15, поставь Python 3.13 и запусти `setup.bat` ещё раз |
 | Отвечает только поиском в Google | установи Ollama и модель; проверь, что Ollama запущена (иконка ламы в трее) |
 | Перебивает сама себя | надень наушники или поставь `"barge_in": false` |
 | Яркость не меняется | работает только на ноутбуках и мониторах с поддержкой DDC/CI |
