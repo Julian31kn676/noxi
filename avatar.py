@@ -24,6 +24,26 @@ VANISH_FRAMES = 16
 
 FMT = QImage.Format.Format_ARGB32_Premultiplied
 AA = QPainter.RenderHint.Antialiasing
+# Масштаб экрана Windows (125 % → 1.25). Все кадры рисуем в реальных пикселях экрана,
+# иначе Windows растягивает картинку 340×500 и Капри с текстом мылятся. Ставит Avatar.
+DPR = 1.0
+
+
+def canvas(w, h):
+    """Прозрачная картинка w×h логических пикселей с запасом под масштаб экрана."""
+    img = QImage(round(w * DPR), round(h * DPR), FMT)
+    img.setDevicePixelRatio(DPR)
+    img.fill(Qt.GlobalColor.transparent)
+    return img
+
+
+def hidpi(src):
+    """Картинку из файла подгоняем под масштаб экрана, сохраняя её логический размер."""
+    if DPR != 1:
+        src = src.scaled(round(src.width() * DPR), round(src.height() * DPR),
+                         Qt.AspectRatioMode.IgnoreAspectRatio, Qt.TransformationMode.SmoothTransformation)
+        src.setDevicePixelRatio(DPR)
+    return src
 CM = QPainter.CompositionMode
 
 STATUS_TEXT = {
@@ -53,8 +73,7 @@ def _shard(cx, cy, ang, length, width, rnd, jag=6):
 def build_procedural(w, h):
     """Рисует фигуру Капри: тёмные осколки, розовые искрящиеся «крылья»
     с фиолетовым контуром и зелёный ромб, на котором потом рисуется глаз."""
-    img = QImage(w, h, FMT)
-    img.fill(Qt.GlobalColor.transparent)
+    img = canvas(w, h)
     p = QPainter(img)
     p.setRenderHint(AA)
     rnd = random.Random(1337)
@@ -146,12 +165,13 @@ def load_custom(path, w, h):
     src = QImage(path)
     if src.isNull():
         return None
-    src = src.scaled(w, h, Qt.AspectRatioMode.KeepAspectRatio,
+    src = src.scaled(round(w * DPR), round(h * DPR), Qt.AspectRatioMode.KeepAspectRatio,
                      Qt.TransformationMode.SmoothTransformation)
-    img = QImage(w, h, FMT)
-    img.fill(Qt.GlobalColor.transparent)
+    src.setDevicePixelRatio(DPR)
+    size = src.deviceIndependentSize()
+    img = canvas(w, h)
     p = QPainter(img)
-    p.drawImage((w - src.width()) // 2, h - src.height(), src)
+    p.drawImage(QPointF((w - size.width()) / 2, h - size.height()), src)
     p.end()
     return img
 
@@ -375,12 +395,13 @@ def load_anims(anim_dir):
             src = QImage(os.path.join(folder, f))
             if src.isNull():
                 continue
-            img = QImage(W, FIG_H, FMT)
-            img.fill(Qt.GlobalColor.transparent)
+            src = hidpi(src)
+            img = canvas(W, FIG_H)
             p = QPainter(img)
+            sw, sh = src.deviceIndependentSize().width(), src.deviceIndependentSize().height()
             # персонажа ставим на «пол», остальное (глаз) — по центру
-            y = FIG_H - src.height() if src.height() >= FIG_H * 0.9 else (FIG_H - src.height()) // 2
-            p.drawImage((W - src.width()) // 2, y, src)
+            y = FIG_H - sh if sh >= FIG_H * 0.9 else (FIG_H - sh) // 2
+            p.drawImage(QPointF((W - sw) // 2, y), src)
             p.end()
             frames.append(img)
         if frames:
@@ -398,6 +419,8 @@ class Avatar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
         self.setFixedSize(W, H)
+        global DPR
+        DPR = max([s.devicePixelRatio() for s in QGuiApplication.screens()] or [1.0])
 
         # Позы: все картинки из assets/poses (и, для совместимости, assets/capri.png).
         # Они периодически сменяют друг друга, чтобы Капри не стояла статичной картинкой.
@@ -447,8 +470,7 @@ class Avatar(QWidget):
         self.anim_start = 0.0
         self.anim_loop = False
 
-        self.frame = QImage(W, H, FMT)
-        self.frame.fill(Qt.GlobalColor.transparent)
+        self.frame = canvas(W, H)
         self.state = "hidden"       # hidden / appearing / visible / vanishing
         self.mode = "idle"           # idle / listening / thinking / speaking
         self.mode_until = 0.0
@@ -798,7 +820,7 @@ class Avatar(QWidget):
             while y < FIG_H:
                 hgt = random.randint(4, 40)
                 sx = random.randint(-int(44 * glitch), int(44 * glitch)) if random.random() < glitch * .7 else 0
-                p.drawImage(QPointF(ox + sx, oy + y), fig, QRectF(0, y, W, hgt))
+                p.drawImage(QPointF(ox + sx, oy + y), fig, QRectF(0, y * DPR, W * DPR, hgt * DPR))
                 y += hgt
         else:
             p.drawImage(ox, oy, fig)
