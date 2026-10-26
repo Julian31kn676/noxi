@@ -1,6 +1,7 @@
 """Печать текста и цепочки действий в окнах: «открой телеграм, первый чат, напиши привет»."""
 import ctypes
 import logging
+import os
 import re
 import time
 from ctypes import wintypes
@@ -189,13 +190,44 @@ def _content_point(hwnd):
     return (r.left + r.right) // 2, r.top + int((r.bottom - r.top) * 0.58), r.bottom - r.top
 
 
+def _own(hwnd):
+    """Окно самой Капри (аватар, молния, окна настроек)?"""
+    pid = wintypes.DWORD()
+    u.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+    return pid.value == os.getpid()
+
+
+def target_window():
+    """Окно, которое листать: активное, а если активна сама Капри (по ней кликнули) — следующее под ней."""
+    hwnd = u.GetForegroundWindow()
+    while hwnd and (_own(hwnd) or not u.IsWindowVisible(hwnd) or u.IsIconic(hwnd)):
+        hwnd = u.GetWindow(hwnd, 2)  # GW_HWNDNEXT — следующее окно ниже по z-порядку
+    return hwnd
+
+
+def _visible_point(hwnd):
+    """Точка внутри окна, где под курсором именно это окно, а не Капри поверх него (она стоит поверх всех
+    окон и может закрывать середину страницы). Колесо мыши получает окно под курсором."""
+    r = wintypes.RECT()
+    u.GetWindowRect(hwnd, ctypes.byref(r))
+    w, h = r.right - r.left, r.bottom - r.top
+    for fx, fy in ((0.5, 0.58), (0.3, 0.58), (0.7, 0.58), (0.5, 0.4), (0.5, 0.75), (0.2, 0.4), (0.8, 0.4),
+                   (0.2, 0.75), (0.8, 0.75), (0.35, 0.3), (0.65, 0.3)):
+        x, y = r.left + int(w * fx), r.top + int(h * fy)
+        under = u.WindowFromPoint(wintypes.POINT(x, y))
+        if under and u.GetAncestor(under, 2) == hwnd:  # GA_ROOT — верхнее окно, которому принадлежит точка
+            return x, y
+    x, y, _ = _content_point(hwnd)
+    return x, y
+
+
 def scroll(notches, hwnd=None, delay=0.012):
     """Крутит колёсико над содержимым активного окна (notches > 0 — вниз). Курсор возвращается на место.
     Колесо, а не клавиши: прокручивает страницу, даже если фокус ввода стоит в каком-нибудь поле."""
-    hwnd = hwnd or u.GetForegroundWindow()
+    hwnd = hwnd or target_window()
     if not hwnd:
         return False
-    x, y, _ = _content_point(hwnd)
+    x, y = _visible_point(hwnd)
     old = wintypes.POINT()
     u.GetCursorPos(ctypes.byref(old))
     u.SetCursorPos(x, y)
@@ -210,7 +242,7 @@ def scroll(notches, hwnd=None, delay=0.012):
 
 def screen_notches(hwnd=None):
     """Сколько щелчков колеса примерно равно одному экрану (щелчок ≈ 3 строки ≈ 60 px)."""
-    hwnd = hwnd or u.GetForegroundWindow()
+    hwnd = hwnd or target_window()
     if not hwnd:
         return 8
     _, _, height = _content_point(hwnd)

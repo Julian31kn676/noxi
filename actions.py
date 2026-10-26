@@ -1274,10 +1274,10 @@ class Actions:
 
     def _autoscroll(self, direction, interval, stop):
         """Плавная прокрутка в окне, которое было активно в момент команды, — пока не скажут «стоп»."""
-        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        hwnd = automation.target_window()
         end = time.time() + 300
         while not stop.is_set() and time.time() < end:
-            if ctypes.windll.user32.GetForegroundWindow() != hwnd:
+            if automation.target_window() != hwnd:
                 break  # пользователь ушёл в другое окно — не крутим чужое
             automation.scroll(direction, hwnd=hwnd)
             stop.wait(interval)
