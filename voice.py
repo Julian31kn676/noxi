@@ -87,12 +87,16 @@ def resolve_device(name):
     return None
 
 
+LEVEL_SCALE = 6.0  # громкость для индикатора: обычная речь у микрофона даёт примерно половину шкалы
+GATE_MAX = 0.35    # порог при самой низкой чувствительности — тише этого звук не слышен
+
+
 class Listener(threading.Thread):
     """Постоянно слушает микрофон. on_final(text, audio_bytes) — законченная фраза,
     on_partial(text) — промежуточный результат (для быстрой реакции на имя).
     Микрофон можно сменить на ходу через set_device()."""
 
-    def __init__(self, model_path, on_final, on_partial, on_error, device_name=None):
+    def __init__(self, model_path, on_final, on_partial, on_error, device_name=None, gain=1.0, sensitivity=100):
         super().__init__(daemon=True)
         self.model_path = model_path
         self.on_final = on_final
@@ -103,10 +107,28 @@ class Listener(threading.Thread):
         self.muted = threading.Event()
         self.reset_req = threading.Event()  # сбросить распознавание (отбросить эхо голоса Капри)
         self.switch = threading.Event()     # переоткрыть поток с другим микрофоном
+        self.gain = gain                # громкость ввода для Капри: 1 — как есть, 2 — вдвое громче
+        self.sensitivity = sensitivity  # 100 — слышит всё, меньше — тихие звуки (шум, фон) отбрасываются
+        self.level = 0.0                # текущая громкость с микрофона 0..1 — для индикатора в настройках
 
     def set_device(self, name):
         self.device_name = name or None
         self.switch.set()
+
+    def gate_level(self):
+        """Порог громкости 0..1, ниже которого звук считается тишиной."""
+        return (100 - self.sensitivity) / 100 * GATE_MAX
+
+    def process(self, data):
+        """Усиление и шумовой порог для блока звука int16. Заодно обновляет self.level."""
+        import numpy as np
+        x = np.frombuffer(data, np.int16).astype(np.float32)
+        if self.gain != 1.0:
+            x = np.clip(x * self.gain, -32768, 32767)
+        self.level = min(1.0, float(np.sqrt(np.mean(x * x))) / 32768 * LEVEL_SCALE) if len(x) else 0.0
+        if self.level < self.gate_level():
+            x[:] = 0
+        return x.astype(np.int16).tobytes()
 
     def run(self):
         try:
@@ -160,7 +182,7 @@ class Listener(threading.Thread):
             was_muted = False
             while not self.switch.is_set():
                 try:
-                    data = q.get(timeout=0.5)
+                    data = self.process(q.get(timeout=0.5))
                 except queue.Empty:
                     continue
                 if self.muted.is_set():
@@ -206,12 +228,17 @@ def _mci(cmd):
     return err, buf.value
 
 
-def play_mp3(path, stop_event):
-    """Играет mp3/wav, пока не закончится или не взведён stop_event. True — если прервали."""
+def play_mp3(path, stop_event, volume=100):
+    """Играет mp3/wav, пока не закончится или не взведён stop_event. True — если прервали.
+    volume 0..100 — громкость Капри (не трогает общую громкость Windows)."""
     _mci("close capri_tts")
-    kind = "waveaudio" if path.lower().endswith(".wav") else "mpegvideo"
-    if _mci(f'open "{path}" type {kind} alias capri_tts')[0] != 0:
+    # wav (голос с эффектами) — как раньше, через waveaudio: громкость уже вшита в файл при обработке.
+    # mp3 (чистый голос, если обработка не удалась) — через mpegvideo, он умеет менять громкость.
+    wav = path.lower().endswith(".wav")
+    if _mci(f'open "{path}" type {"waveaudio" if wav else "mpegvideo"} alias capri_tts')[0] != 0:
         raise RuntimeError("MCI не открыл файл")
+    if not wav:
+        _mci(f"setaudio capri_tts volume to {int(max(0, min(100, volume)) * 10)}")
     _mci("play capri_tts")
     interrupted = False
     try:
@@ -260,9 +287,10 @@ def trim_silence(x, sr=FX_SR, thr=0.012, pad=0.04):
     return x[max(0, loud[0] - p):loud[-1] + p]
 
 
-def write_wav(dst, x, sr=FX_SR):
+def write_wav(dst, x, sr=FX_SR, volume=100):
+    """Записать wav, выровняв громкость; volume 0..100 — громкость Капри."""
     import numpy as np
-    x = x / max(1e-6, float(np.max(np.abs(x)))) * 0.92
+    x = x / max(1e-6, float(np.max(np.abs(x)))) * 0.92 * max(0, min(100, volume)) / 100
     with wave.open(dst, "wb") as w:
         w.setnchannels(1)
         w.setsampwidth(2)
@@ -398,6 +426,8 @@ class Speaker:
         self.path = os.path.join(tempfile.gettempdir(), f"capri_tts_{os.getpid()}.mp3")
         self.fx_path = os.path.join(tempfile.gettempdir(), f"capri_tts_{os.getpid()}.wav")
         self.stop_event = threading.Event()
+        self.volume = int(cfg.get("voice_volume", 100))  # громкость Капри 0..100, общая громкость Windows не меняется
+        self.edge_error = None  # почему не сработал голос Microsoft в последний раз (None — сработал)
         if self.engine == "silero":  # прогреваем модель заранее, чтобы первая фраза не тормозила
             threading.Thread(target=self._warmup, daemon=True).start()
 
@@ -418,8 +448,11 @@ class Speaker:
         if not text:
             return False
         try:
-            return self._edge(text)
+            interrupted = self._edge(text)
+            self.edge_error = None
+            return interrupted
         except Exception as e:
+            self.edge_error = str(e)
             log.info("edge-tts недоступен (%s), использую голос Windows", e)
         try:
             return self._sapi(text)
@@ -444,7 +477,7 @@ class Speaker:
         x = np.concatenate(chunks)
         if self.fx > 0:
             x = fx_process(x, self.fx)
-        write_wav(dst, x)
+        write_wav(dst, x, volume=self.volume)
         return dst
 
     def render(self, text, dst):
@@ -477,7 +510,7 @@ class Speaker:
             x = np.concatenate(chunks)
             if self.fx > 0:
                 x = fx_process(x, self.fx)
-            write_wav(dst, x)
+            write_wav(dst, x, volume=self.volume)
             return dst
         except Exception:
             log.exception("Обработка голоса не удалась, говорю чистым голосом")
@@ -487,7 +520,7 @@ class Speaker:
         path = self.render(text, self.fx_path)
         if self.stop_event.is_set():
             return True
-        return play_mp3(path, self.stop_event)
+        return play_mp3(path, self.stop_event, self.volume)
 
     def _sapi(self, text):
         import comtypes.client
@@ -498,6 +531,7 @@ class Speaker:
             if "Russian" in desc or "Irina" in desc or "Pavel" in desc:
                 sp.Voice = voices.Item(i)
                 break
+        sp.Volume = max(0, min(100, self.volume))
         sp.Speak(text, 1)  # SVSFlagsAsync
         while not sp.WaitUntilDone(50):
             if self.stop_event.is_set():
@@ -506,8 +540,8 @@ class Speaker:
         return False
 
 
-def make_glitch_sound(path):
-    """Короткий цифровой «треск» при появлении."""
+def make_glitch_sound(path, volume=100):
+    """Короткий цифровой «треск» при появлении. volume 0..100 — громкость Капри."""
     rnd = random.Random(42)
     frames = bytearray()
     sr = 22050
@@ -519,7 +553,7 @@ def make_glitch_sound(path):
         env = (1 - i / n) ** 1.5
         sq = 1 if math.sin(2 * math.pi * freq * i / sr) > 0 else -1
         noise = rnd.uniform(-1, 1) if (i // 400) % 3 == 0 else 0
-        v = int(5500 * env * (0.6 * sq + 0.5 * noise))
+        v = int(5500 * volume / 100 * env * (0.6 * sq + 0.5 * noise))
         frames += struct.pack("<h", max(-32767, min(32767, v)))
     with wave.open(path, "wb") as w:
         w.setnchannels(1)

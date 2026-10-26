@@ -13,13 +13,15 @@ import time
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QApplication, QInputDialog, QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QMenu, QSlider, QSystemTrayIcon,
+                               QWidget, QWidgetAction)
 
 from actions import Actions, Reply
 from ai import AI
 from local_ai import LocalAI
 from persona import line
 from avatar import Avatar
+import zapret
 from voice import (Listener, Speaker, default_input_name, google_stt, input_devices, make_glitch_sound,
                    play_sound_async)
 
@@ -43,6 +45,9 @@ DEFAULTS = {
     "roam_chance": 0.5,
     "teleport_on_answer": True,
     "search_when_unsure": True,
+    "voice_volume": 100,     # громкость голоса Капри 0..100 (общая громкость Windows не меняется)
+    "mic_gain": 1.0,         # громкость микрофона для Капри: 1 — как есть, 2 — вдвое громче
+    "mic_sensitivity": 100,  # 100 — слышит всё; меньше — тихий шум и фон отбрасываются
     "browser": "",  # в каком браузере открывать сайты: "хром", "яндекс", "опера"… или путь к exe; "" — как в Windows
     "anthropic_api_key": "",
     "model": "claude-opus-5-5",
@@ -54,7 +59,7 @@ DEFAULTS = {
     "voice_pitch": "+15Hz",
     "voice_shift": 0,
     "voice_lively": False,
-    "voice_fx": 1.0,
+    "voice_fx": 1.8,
     "listen_window_seconds": 8,
     "followup_seconds": 6,
     "hide_after_seconds": 12,
@@ -218,6 +223,7 @@ class Capri(QObject):
             self.local.on_model_change = self._remember_model
         self.actions = Actions(cfg, BASE, self.ai, save=save_entry)
         self.config_mtime = self._config_mtime()
+        self.zapret_checked = False  # предлагали ли уже исправить zapret в этом сеансе
         self.actions.local = self.local
         self.speaker = Speaker(cfg)
         self.jobs = queue.Queue()
@@ -232,7 +238,7 @@ class Capri(QObject):
         self.listener = None
         self.glitch_wav = os.path.join(tempfile.gettempdir(), "capri_glitch.wav")
         try:
-            make_glitch_sound(self.glitch_wav)
+            make_glitch_sound(self.glitch_wav, self.speaker.volume)
         except Exception:
             self.glitch_wav = None
 
@@ -243,7 +249,9 @@ class Capri(QObject):
         model =os.path.join(BASE, self.cfg["vosk_model"])
         if os.path.isdir(model):
             self.listener = Listener(model, self.on_final, self.on_partial, self.on_listener_error,
-                                     device_name=self.cfg.get("mic_device") or None)
+                                     device_name=self.cfg.get("mic_device") or None,
+                                     gain=float(self.cfg.get("mic_gain", 1.0)),
+                                     sensitivity=int(self.cfg.get("mic_sensitivity", 100)))
             self.listener.start()
         else:
             self.jobs.put(("say", line("no_model")))
@@ -428,6 +436,36 @@ class Capri(QObject):
         if announce:
             self.jobs.put(("say", line("mic_set", t=name or "микрофон Windows по умолчанию")))
 
+    def set_mic_tuning(self, gain=None, sensitivity=None):
+        """Громкость ввода и чувствительность микрофона для Капри — сразу и запоминаются."""
+        if gain is not None:
+            self.cfg["mic_gain"] = round(float(gain), 2)
+            save_setting("mic_gain", self.cfg["mic_gain"])
+            if self.listener:
+                self.listener.gain = self.cfg["mic_gain"]
+        if sensitivity is not None:
+            self.cfg["mic_sensitivity"] = int(sensitivity)
+            save_setting("mic_sensitivity", self.cfg["mic_sensitivity"])
+            if self.listener:
+                self.listener.sensitivity = self.cfg["mic_sensitivity"]
+
+    def set_voice_fx(self, strength):
+        """Сила цифровых эффектов голоса: 0 — чистый голос, 1.8 — как задумано, больше — сильнее."""
+        self.speaker.fx = round(float(strength), 2)
+        self.cfg["voice_fx"] = self.speaker.fx
+        save_setting("voice_fx", self.speaker.fx)
+
+    def set_voice_volume(self, volume):
+        """Громкость голоса Капри 0..100 — только её, общая громкость Windows не меняется."""
+        self.speaker.volume = int(volume)
+        self.cfg["voice_volume"] = int(volume)
+        save_setting("voice_volume", int(volume))
+        if self.glitch_wav:
+            try:
+                make_glitch_sound(self.glitch_wav, self.speaker.volume)
+            except Exception:
+                pass
+
     def mic_command(self, action):
         if action == "mic_info":
             return Reply(line("mic_info", t=self.current_mic()))
@@ -571,7 +609,33 @@ class Capri(QObject):
             if self.listener and not barge_in:
                 time.sleep(0.25)
                 self.listener.muted.clear()
+        self._check_voice_blocked()
         return self.interrupted
+
+    def _check_voice_blocked(self):
+        """Голос Microsoft не прошёл из-за сети, а запущен zapret — один раз за сеанс объясняем
+        и предлагаем добавить сервер голоса в исключения zapret."""
+        err = self.speaker.edge_error
+        if self.zapret_checked or not err or not zapret.NETWORK_ERROR.search(err) or not zapret.running():
+            return
+        self.zapret_checked = True
+        lists = zapret.find_lists()
+        if not lists:
+            self.jobs.put(("say", line("zapret_manual")))
+        elif zapret.excluded(lists):
+            self.jobs.put(("say", line("zapret_restart")))
+        else:
+            def fix():
+                try:
+                    zapret.add_exclude(lists)
+                except OSError as e:
+                    log.exception("Не удалось дописать исключение zapret")
+                    return Reply(line("zapret_fail", e=e))
+                log.info("bing.com добавлен в исключения zapret: %s", lists)
+                return Reply(line("zapret_fixed"))
+            self.actions.pending = fix
+            self.awake_until = time.time() + 20  # ответ «да» без имени
+            self.jobs.put(("say", line("zapret_offer")))
 
 
 def tray_icon():
@@ -615,16 +679,25 @@ def main():
         if ok and text.strip():
             capri.text_command(text.strip())
 
-    entries = []  # окно держим, пока открыто (иначе его соберёт сборщик мусора)
+    windows = {}  # открытые окна держим, пока открыты (иначе их соберёт сборщик мусора); одно окно каждого вида
+
+    def show_window(kind, make):
+        old = windows.get(kind)
+        if old is not None and old.isVisible():
+            old.close()
+        dlg = windows[kind] = make()
+        dlg.show()
+        dlg.raise_()
+        dlg.activateWindow()
 
     def open_entries():
         from entries_dialog import EntriesDialog
         capri.reload_config_if_changed(speak=False)
-        dlg = EntriesDialog(capri.actions)
-        entries[:] = [dlg]
-        dlg.show()
-        dlg.raise_()
-        dlg.activateWindow()
+        show_window("entries", lambda: EntriesDialog(capri.actions))
+
+    def open_sound():
+        from sound_dialog import SoundDialog
+        show_window("sound", lambda: SoundDialog(capri))
 
     menu = QMenu()
     for title, fn in (("Позвать Капри", capri.call_from_click),
@@ -659,7 +732,37 @@ def main():
                     a.setChecked(value == chosen or (value is None and not chosen))
                     a.triggered.connect(lambda _=False, v=value: capri.set_mic(v))
                     m.addAction(a)
+                m.addSeparator()
+                tune = QAction("Громкость и чувствительность…", m)
+                tune.triggered.connect(open_sound)
+                m.addAction(tune)
             mic_menu.aboutToShow.connect(fill_mics)
+
+            # «Громкость Капри» — ползунок прямо в меню, чтобы не лезть в микшер громкости Windows
+            vol_menu = menu.addMenu("Громкость Капри")
+            box = QWidget()
+            row = QHBoxLayout(box)
+            row.setContentsMargins(10, 6, 10, 6)
+            slider = QSlider(Qt.Orientation.Horizontal)
+            slider.setRange(0, 100)
+            slider.setMinimumWidth(180)
+            value = QLabel()
+            value.setMinimumWidth(36)
+            row.addWidget(slider)
+            row.addWidget(value)
+            slider.valueChanged.connect(lambda v, lbl=value: lbl.setText(f"{v}%"))
+            slider.sliderReleased.connect(lambda s=slider: capri.set_voice_volume(s.value()))
+            slider.valueChanged.connect(lambda v, s=slider: None if s.isSliderDown() else capri.set_voice_volume(v))
+            wa = QWidgetAction(vol_menu)
+            wa.setDefaultWidget(box)
+            vol_menu.addAction(wa)
+
+            def sync_volume(s=slider, lbl=value):
+                s.blockSignals(True)
+                s.setValue(int(capri.cfg.get("voice_volume", 100)))
+                s.blockSignals(False)
+                lbl.setText(f"{s.value()}%")
+            vol_menu.aboutToShow.connect(sync_volume)
             continue
         if title == "SEARCH":
             # галочка: открывать ли Google, когда Капри не знает ответа (search_when_unsure)
