@@ -916,6 +916,12 @@ FORGET_RE = (r"^(забудь|удали|убери)( мой| мою| из па�
              r"приложени\w*|игр\w*) (?P<name>.+)$")
 
 
+# «когда я скажу X, отвечай Y», «на фразу X отвечай Y» — свой ответ; «забудь ответ на X»
+REPLY_RE = (r"^((когда|если) (я )?(говорю|скажу|произнесу|спрошу)|на (фразу|слова|вопрос))\s+(?P<p>.+?)\s*,?\s+"
+            r"(ты )?(отвечай|ответь|говори|скажи)( мне)?\s+(?P<r>.+)$")
+FORGET_REPLY_RE = r"^(забудь|удали|убери) (свой |мой |этот )?ответ (на|для) (фразу |слова |вопрос )?(?P<p>.+)$"
+
+
 class Actions:
     def __init__(self, cfg, base_dir, ai, save=None):
         self.cfg = cfg
@@ -938,6 +944,8 @@ class Actions:
              r"(уйди|уходи|убирайся|свали|пропади|исчезни) (с|из) (экрана|монитора|глаз)", self.hide),
             (REMEMBER_RE, self.remember_cmd),
             (FORGET_RE, self.forget_cmd),
+            (REPLY_RE, self.reply_cmd),
+            (FORGET_REPLY_RE, self.forget_reply_cmd),
             (r"помаши|помахай|махни|помаши ручкой|поздоровайся", self.wave),
             (r"погуляй|прогуляйся|пройдись|прогулк", self.roam),
             (r"что ты (умеешь|можешь)|как\w* (у тебя )?команд|(назови|перечисли|скажи) (\S+ )?команд|"
@@ -1042,8 +1050,12 @@ class Actions:
             if re.match(r"^(никак\w*|ни одно|ни то|отмена|не надо|нет|ничего)\b", c):
                 return Reply(line("cancel"))
             # ответ не про выбор — значит, это новая команда
+        custom = self.custom_reply(c)  # своя фраза целиком — не делим её на цепочку команд
+        if custom:
+            return custom
         # «запомни … как X и Y» — название целиком, не цепочка команд
-        steps = None if re.match(REMEMBER_RE, c) or re.match(FORGET_RE, c) else automation.split_chain(c)
+        whole = any(re.match(p, c) for p in (REMEMBER_RE, FORGET_RE, REPLY_RE, FORGET_REPLY_RE))
+        steps = None if whole else automation.split_chain(c)
         if steps:
             try:
                 return self.run_chain(steps)
@@ -1099,6 +1111,9 @@ class Actions:
         return r
 
     def _handle_one(self, c):
+        r = self.custom_reply(c)  # свои ответы — раньше команд и нейросети
+        if r:
+            return r
         for pattern, fn in self.routes:
             m = re.search(pattern, c)
             if m:
@@ -1117,15 +1132,31 @@ class Actions:
         self.sites = {norm(k): v for k, v in cfg.get("sites", {}).items()}
         self.apps = {norm(k): v for k, v in cfg.get("apps", {}).items()}
         self.aliases = {norm(k): v for k, v in cfg.get("app_aliases", {}).items()}
+        self.replies = {norm(k): v for k, v in cfg.get("replies", {}).items() if v}
+
+    def custom_reply(self, c):
+        """Свой ответ на фразу из config.json → "replies" (точно или почти дословно) или None."""
+        if not self.replies:
+            return None
+        if c in self.replies:
+            return Reply(self.replies[c])
+        close = difflib.get_close_matches(c, list(self.replies), n=1, cutoff=0.85)
+        if close:
+            return Reply(self.replies[close[0]])
+        # фраза целиком внутри команды и лишнего немного: «ну как дела» → «как дела»
+        for phrase in sorted(self.replies, key=len, reverse=True):
+            if len(c) - len(phrase) <= 12 and re.search(rf"(^|\s){re.escape(phrase)}(\s|$)", c):
+                return Reply(self.replies[phrase])
+        return None
 
     def remember(self, section, name, target):
-        """Записать сайт/программу (section "sites" / "apps") в config.json и сразу начать её узнавать.
-        target=None — забыть. Возвращает текст ошибки или None."""
+        """Записать сайт / программу / свой ответ (section "sites" / "apps" / "replies") в config.json
+        и сразу начать её узнавать. target=None — забыть. Возвращает текст ошибки или None."""
         name = norm(name)
         err = self.save(section, name, target) if self.save else None
         if err:
             return err
-        book = self.sites if section == "sites" else self.apps
+        book = {"sites": self.sites, "apps": self.apps, "replies": self.replies}[section]
         stored = self.cfg.setdefault(section, {})
         if target is None:
             book.pop(name, None)
@@ -1166,6 +1197,25 @@ class Actions:
             return Reply(line("forget_missing", t=name))
         err = self.remember(section, name, None)
         return Reply(line("remember_fail", e=err) if err else line("forget_ok", t=name))
+
+    def reply_cmd(self, c, m):
+        """«Когда я скажу „как дела“, отвечай „лучше всех“» — свой ответ на фразу."""
+        phrase = m.group("p").strip(" ,")
+        text = m.group("r").strip(" ,")
+        text = text[:1].upper() + text[1:]
+        if not re.search(r"[.!?…]$", text):
+            text += "."
+        err = self.remember("replies", phrase, text)
+        return Reply(line("remember_fail", e=err) if err else line("reply_saved", p=phrase, r=text))
+
+    def forget_reply_cmd(self, c, m):
+        phrase = norm(m.group("p"))
+        close = phrase if phrase in self.replies else next(
+            iter(difflib.get_close_matches(phrase, list(self.replies), n=1, cutoff=0.85)), None)
+        if not close:
+            return Reply(line("forget_missing", t=phrase))
+        err = self.remember("replies", close, None)
+        return Reply(line("remember_fail", e=err) if err else line("forget_ok", t=close))
 
     def fallback(self, cmd, force_search=False):
         """Без ИИ: вопрос ищем в Google (если search_when_unsure не выключен), остальное — «не знаю команды»."""

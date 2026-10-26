@@ -48,7 +48,8 @@ DEFAULTS = {
     "voice_volume": 100,     # громкость голоса Капри 0..100 (общая громкость Windows не меняется)
     "mic_gain": 1.0,         # громкость микрофона для Капри: 1 — как есть, 2 — вдвое громче
     "mic_sensitivity": 100,  # 100 — слышит всё; меньше — тихий шум и фон отбрасываются
-    "browser": "",  # в каком браузере открывать сайты: "хром", "яндекс", "опера"… или путь к exe; "" — как в Windows
+    "browser": "",
+    "replies": {},           # свои ответы: {"фраза": "что ответит Капри"} — проверяются раньше команд и нейросети  # в каком браузере открывать сайты: "хром", "яндекс", "опера"… или путь к exe; "" — как в Windows
     "anthropic_api_key": "",
     "model": "claude-opus-5-5",
     "wake_words": ["капри", "каприз", "капре", "кепри", "капли"],
@@ -422,7 +423,7 @@ class Capri(QObject):
                 self.say(CONFIG_ERROR)
             return
         self.config_mtime = mtime
-        for key in ("sites", "apps", "app_aliases", "search_when_unsure", "browser", "chatter"):
+        for key in ("sites", "apps", "app_aliases", "search_when_unsure", "browser", "chatter", "replies"):
             self.cfg[key] = fresh[key]
         self.actions.set_lists(self.cfg)
         log.info("config.json перечитан")
@@ -711,7 +712,7 @@ def main():
     for title, fn in (("Позвать Капри", capri.call_from_click),
                       ("Замолчать", capri.interrupt),
                       ("Написать команду…", ask_text),
-                      ("Мои сайты и программы…", open_entries),
+                      ("Мои сайты, программы и ответы…", open_entries),
                       ("Проверить ПК", lambda: capri.text_command("проверь компьютер")),
                       ("Спрятать", avatar.vanish),
                       ("MIC", None),

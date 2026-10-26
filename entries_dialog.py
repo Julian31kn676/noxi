@@ -64,23 +64,60 @@ class SiteForm(QDialog):
         return self.name.text().strip(), url if url.startswith("http") else "https://" + url
 
 
+class ReplyForm(QDialog):
+    """Своя фраза и ответ Капри на неё."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setWindowTitle("Новый ответ")
+        self.setStyleSheet(STYLE)
+        self.phrase = QLineEdit()
+        self.phrase.setPlaceholderText("например: твой голос это проблема")
+        self.answer = QLineEdit()
+        self.answer.setPlaceholderText("например: Ну и иди ты.")
+        form = QFormLayout(self)
+        form.addRow(QLabel("Что ты говоришь Капри (после её имени) и что она ответит."))
+        form.addRow("Фраза:", self.phrase)
+        form.addRow("Ответ:", self.answer)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Отмена")
+        buttons.accepted.connect(self._check)
+        buttons.rejected.connect(self.reject)
+        form.addRow(buttons)
+        self.resize(460, 0)
+
+    def _check(self):
+        if not self.phrase.text().strip() or not self.answer.text().strip():
+            QMessageBox.warning(self, "Капри", "Заполни и фразу, и ответ.")
+        else:
+            self.accept()
+
+    def values(self):
+        return self.phrase.text().strip(), self.answer.text().strip()
+
+
 class EntriesDialog(QDialog):
     def __init__(self, actions):
         super().__init__(None, Qt.WindowType.WindowStaysOnTopHint)
         self.actions = actions
-        self.setWindowTitle("Капри — мои сайты и программы")
+        self.setWindowTitle("Капри — мои сайты, программы и ответы")
         self.setStyleSheet(STYLE)
         self.tabs = QTabWidget()
         self.trees = {}
-        for section, title, column in (("sites", "Сайты", "Адрес"), ("apps", "Программы", "Что открывает")):
+        for section, title, first, column in (("sites", "Сайты", "Название", "Адрес"),
+                                              ("apps", "Программы", "Название", "Что открывает"),
+                                              ("replies", "Ответы", "Фраза", "Ответ Капри")):
             tree = QTreeWidget()
-            tree.setHeaderLabels(["Название", column])
+            tree.setHeaderLabels([first, column])
             tree.setRootIsDecorated(False)
             tree.header().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
             self.trees[section] = tree
             self.tabs.addTab(tree, title)
-        hint = QLabel("Название — то, что говоришь после «Капри, открой …». Изменения работают сразу.")
-        hint.setWordWrap(True)
+        self.hint = QLabel()
+        self.hint.setWordWrap(True)
+        self.tabs.currentChanged.connect(self._update_hint)
+        self._update_hint()
+        hint = self.hint
         add, remove, close = QPushButton("Добавить…"), QPushButton("Удалить"), QPushButton("Закрыть")
         add.clicked.connect(self.add)
         remove.clicked.connect(self.remove)
@@ -97,15 +134,25 @@ class EntriesDialog(QDialog):
         self.resize(640, 520)
         self.refresh()
 
+    def _book(self, section):
+        return {"sites": self.actions.sites, "apps": self.actions.apps, "replies": self.actions.replies}[section]
+
     def refresh(self):
         for section, tree in self.trees.items():
-            book = self.actions.sites if section == "sites" else self.actions.apps
+            book = self._book(section)
             tree.clear()
             for name in sorted(book):
                 tree.addTopLevelItem(QTreeWidgetItem([name, str(book[name])]))
 
     def _section(self):
-        return "sites" if self.tabs.currentIndex() == 0 else "apps"
+        return ("sites", "apps", "replies")[self.tabs.currentIndex()]
+
+    def _update_hint(self, *_):
+        self.hint.setText(
+            "Фраза — что ты говоришь Капри (можно чуть иначе), ответ — что она скажет в ответ. Работает сразу.\n"
+            "Голосом: «Капри, когда я скажу „как дела“, отвечай „лучше всех“»."
+            if self._section() == "replies" else
+            "Название — то, что говоришь после «Капри, открой …». Изменения работают сразу.")
 
     def _save(self, section, name, target):
         err = self.actions.remember(section, name, target)
@@ -116,6 +163,11 @@ class EntriesDialog(QDialog):
         return True
 
     def add(self):
+        if self._section() == "replies":
+            form = ReplyForm(self)
+            if form.exec():
+                self._save("replies", *form.values())
+            return
         if self._section() == "sites":
             form = SiteForm(self)
             if form.exec():
