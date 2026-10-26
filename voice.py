@@ -12,6 +12,7 @@ import shutil
 import struct
 import tempfile
 import threading
+import time
 import wave
 
 log = logging.getLogger("capri")
@@ -412,6 +413,20 @@ def silero_prosody(sentence, base, rnd, lively=True):
     return levels[max(0, min(4, i))], rate
 
 
+TTS_CACHE = os.path.join(os.environ.get("LOCALAPPDATA", tempfile.gettempdir()), "Capri", "tts_cache")
+CACHE_MAX_TEXT = 160    # фразы длиннее не кэшируем
+CACHE_MAX_FILES = 600   # сколько готовых фраз хранить (~30 МБ)
+
+
+def _trim_cache():
+    try:
+        files = sorted((os.path.join(TTS_CACHE, f) for f in os.listdir(TTS_CACHE)), key=os.path.getmtime)
+        for f in files[:-CACHE_MAX_FILES]:
+            os.remove(f)
+    except OSError:
+        pass
+
+
 class Speaker:
     def __init__(self, cfg):
         self.voice = cfg.get("voice", "ru-RU-SvetlanaNeural")
@@ -489,8 +504,8 @@ class Speaker:
             except Exception:
                 log.exception("Silero не сработал, говорю голосом Microsoft")
         import edge_tts
-        sentences = [s for s in re.split(r"(?<=[.!?…])\s+", text) if s.strip()] if self.lively else [text]
-        sentences = sentences or [text]
+        # по предложениям: они синтезируются параллельно, поэтому длинный ответ ждём как одно предложение
+        sentences = [s for s in re.split(r"(?<=[.!?…])\s+", text) if s.strip()] or [text]
         semis = lively_semitones(sentences, self.shift, random.Random(), self.lively)
         # тон поднимаем сами (Microsoft выше ~260 Гц не поднимает), а ускорение от этого
         # заранее гасим, замедляя синтез на столько же
@@ -514,10 +529,50 @@ class Speaker:
             return dst
         except Exception:
             log.exception("Обработка голоса не удалась, говорю чистым голосом")
-            return parts[0]
+            if len(parts) == 1:
+                return parts[0]
+            asyncio.run(edge_tts.Communicate(text, self.voice, rate=self.rate, pitch=self.pitch).save(self.path))
+            return self.path
+
+    # ---------- кэш: повторяющиеся фразы («Листаю», «Открываю ютуб») звучат сразу, без сервера ----------
+    def _cache_path(self, text):
+        import hashlib
+        key = "|".join(map(str, (text, self.engine, self.voice, self.rate, self.pitch, self.shift, self.lively,
+                                 self.fx, self.volume, self.silero_voice)))
+        return os.path.join(TTS_CACHE, hashlib.sha1(key.encode("utf-8")).hexdigest() + ".wav")
+
+    def cached_render(self, text):
+        """Путь к готовому звуку фразы: из кэша или свежий (и тогда кладём его в кэш)."""
+        path = self._cache_path(text)
+        if os.path.isfile(path):
+            os.utime(path)  # свежие держим, старые потом удаляем
+            return path
+        out = self.render(text, self.fx_path)
+        if out.endswith(".wav") and len(text) <= CACHE_MAX_TEXT:  # длинные ответы нейросети не повторяются
+            try:
+                os.makedirs(TTS_CACHE, exist_ok=True)
+                shutil.copyfile(out, path)
+                _trim_cache()
+            except OSError:
+                pass
+        return out
+
+    def prewarm(self, phrases):
+        """Заранее озвучить постоянные фразы в фоне, по одной — чтобы потом они звучали сразу."""
+        for text in phrases:
+            text = clean_for_speech(text)
+            if not text or os.path.isfile(self._cache_path(text)):
+                continue
+            try:
+                self.cached_render(text)
+            except Exception as e:
+                log.info("Предзагрузка фраз остановлена: %s", e)
+                return
+            time.sleep(0.5)
+        log.info("Постоянные фразы озвучены заранее")
 
     def _edge(self, text):
-        path = self.render(text, self.fx_path)
+        path = self.cached_render(text)
         if self.stop_event.is_set():
             return True
         return play_mp3(path, self.stop_event, self.volume)

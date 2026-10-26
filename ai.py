@@ -3,7 +3,7 @@ import datetime
 import logging
 import os
 
-from persona import CHARACTER, SPEECH_RULES
+from persona import CHARACTER, SPEECH_RULES, user_context
 
 log = logging.getLogger("capri")
 
@@ -64,7 +64,7 @@ class AI:
         while self.history and self.history[0]["role"] != "user":
             self.history.pop(0)
         try:
-            answer = self._call(SYSTEM, self.history,
+            answer = self._call(SYSTEM + "\n" + user_context(), self.history,
                                 [{"type": "web_search_20260209", "name": "web_search", "max_uses": 3}])
         except anthropic.AuthenticationError:
             self.history.pop()
@@ -87,7 +87,7 @@ class AI:
             return None
         try:
             return self._call(
-                SYSTEM,
+                SYSTEM + "\n" + user_context(),
                 [{"role": "user", "content":
                   "Вот отчёт диагностики моего ПК. Скажи голосом 2–4 предложения: общее состояние, "
                   "главные проблемы и что конкретно сделать. Ошибки, которые обычно безвредны "

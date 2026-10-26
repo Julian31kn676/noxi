@@ -11,27 +11,46 @@ import tempfile
 import threading
 import time
 
-from PySide6.QtCore import QObject, Qt, Signal
-from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QMenu, QSlider, QSystemTrayIcon,
-                               QWidget, QWidgetAction)
-
-from actions import Actions, Reply
-from ai import AI
-from local_ai import LocalAI
-from persona import line
-from avatar import Avatar
-import zapret
-from voice import (Listener, Speaker, default_input_name, google_stt, input_devices, make_glitch_sound,
-                   play_sound_async)
-
 BASE = os.path.dirname(os.path.abspath(__file__))
 CONFIG_PATH = os.path.join(BASE, "config.json")
 
+# журнал — до всех библиотек: если какой-то не хватает, Капри падает без окна, и узнать причину можно только тут
 logging.basicConfig(filename=os.path.join(BASE, "capri.log"), level=logging.INFO, encoding="utf-8",
                     format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("capri")
 log.info("Python %s", sys.version.split()[0])
+
+
+def fatal(text):
+    """Капри запускается без окна консоли, поэтому о том, что не так, говорим окном Windows."""
+    log.error(text)
+    try:
+        import ctypes
+        ctypes.windll.user32.MessageBoxW(None, text, "Капри не запустилась", 0x10)
+    except Exception:
+        pass
+    sys.exit(1)
+
+
+try:
+    from PySide6.QtCore import QObject, Qt, Signal
+    from PySide6.QtGui import QAction, QColor, QIcon, QPainter, QPen, QPixmap
+    from PySide6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QMenu, QSlider,
+                                   QSystemTrayIcon, QWidget, QWidgetAction)
+
+    from actions import Actions, Reply
+    from ai import AI
+    from local_ai import LocalAI
+    from persona import LINES, gendered, line, set_user
+    from avatar import Avatar
+    import zapret
+    from voice import (Listener, Speaker, default_input_name, google_stt, input_devices, make_glitch_sound,
+                       play_sound_async)
+except ImportError as e:
+    log.exception("Не хватает библиотек")
+    fatal(f"Не установлены нужные библиотеки ({e.name or e}).\n\n"
+          f"Запусти setup.bat в папке Капри и дождись надписи «Готово», потом снова run.bat.\n"
+          f"Если setup.bat выдаёт ошибку — сфотографируй его окно.\n\nPython {sys.version.split()[0]}")
 
 DEFAULTS = {
     "enable_ai": False,
@@ -48,6 +67,10 @@ DEFAULTS = {
     "voice_volume": 100,     # громкость голоса Капри 0..100 (общая громкость Windows не меняется)
     "mic_gain": 1.0,         # громкость микрофона для Капри: 1 — как есть, 2 — вдвое громче
     "mic_sensitivity": 100,  # 100 — слышит всё; меньше — тихий шум и фон отбрасываются
+    "user_name_mode": "none",  # как называть пользователя: "custom" — user_name, "windows" — имя пользователя
+                               # Windows, "pc" — имя компьютера, "none" — не называть
+    "user_name": "",
+    "user_gender": "male",     # "male" / "female" — в каком роде Капри к тебе обращается
     "browser": "",
     "replies": {},           # свои ответы: {"фраза": "что ответит Капри"} — проверяются раньше команд и нейросети  # в каком браузере открывать сайты: "хром", "яндекс", "опера"… или путь к exe; "" — как в Windows
     "anthropic_api_key": "",
@@ -142,6 +165,22 @@ def save_entry(section, name, value):
     return _edit_config(change)
 
 
+def user_display_name(cfg):
+    """Как Капри называет пользователя — по настройке user_name_mode."""
+    mode = cfg.get("user_name_mode", "none")
+    if mode == "custom":
+        return cfg.get("user_name", "").strip()
+    if mode == "windows":
+        return os.environ.get("USERNAME", "")
+    if mode == "pc":
+        return os.environ.get("COMPUTERNAME", "")
+    return ""
+
+
+def apply_user(cfg):
+    set_user(user_display_name(cfg), cfg.get("user_gender", "male"))
+
+
 CONFIG_ERROR = ""  # что сказать вслух, если config.json не прочитался
 
 
@@ -162,6 +201,10 @@ def load_config():
                             cfg[k][name] = value
                 else:
                     cfg[k] = v
+            missing = [k for k in DEFAULTS if k not in user]
+            if missing:  # файл неполный (его создал setup_ai.bat или он из старой версии) — дописываем
+                _edit_config(lambda data: [data.setdefault(k, DEFAULTS[k]) for k in missing])
+                log.info("В config.json добавлены недостающие настройки: %s", ", ".join(missing))
         except json.JSONDecodeError as e:
             log.error("config.json с ошибкой (строка %d, символ %d: %s), использую настройки по умолчанию",
                       e.lineno, e.colno, e.msg)
@@ -262,6 +305,15 @@ class Capri(QObject):
         if CONFIG_ERROR:
             self.jobs.put(("say", CONFIG_ERROR))
         threading.Thread(target=self._chatter_loop, daemon=True).start()  # сам проверяет, включено ли
+        threading.Thread(target=self._prewarm_voice, daemon=True).start()
+
+    def _prewarm_voice(self):
+        """Через полминуты после запуска озвучиваем в фоне постоянные фразы и свои ответы — потом они
+        звучат сразу, без ожидания сервера Microsoft."""
+        time.sleep(30)
+        static = [gendered(t) for variants in LINES.values() for t in variants if "{" not in t]
+        static += list(self.cfg.get("replies", {}).values())
+        self.speaker.prewarm(static)
 
     # ----- спонтанные появления -----
     def _chatter_loop(self):
@@ -385,6 +437,14 @@ class Capri(QObject):
     def on_listener_error(self, err, kind="mic"):
         self.jobs.put(("say", line("model_broken" if kind == "model" else "no_mic")))
 
+    def set_profile(self, mode, name, gender):
+        """«Как ко мне обращаться…»: как называть пользователя и в каком роде. Сразу и запоминается."""
+        for key, value in (("user_name_mode", mode), ("user_name", name), ("user_gender", gender)):
+            self.cfg[key] = value
+            save_setting(key, value)
+        apply_user(self.cfg)
+        log.info("Обращение: %s, %s", user_display_name(self.cfg) or "без имени", gender)
+
     def set_chatter(self, on):
         """Галочка в трее: появляется ли Капри сама (поболтать, погулять по экрану). Сразу и запоминается."""
         self.cfg["chatter"] = bool(on)
@@ -423,9 +483,11 @@ class Capri(QObject):
                 self.say(CONFIG_ERROR)
             return
         self.config_mtime = mtime
-        for key in ("sites", "apps", "app_aliases", "search_when_unsure", "browser", "chatter", "replies"):
+        for key in ("sites", "apps", "app_aliases", "search_when_unsure", "browser", "chatter", "replies",
+                    "user_name_mode", "user_name", "user_gender"):
             self.cfg[key] = fresh[key]
         self.actions.set_lists(self.cfg)
+        apply_user(self.cfg)
         log.info("config.json перечитан")
 
     # ----- кнопки -----
@@ -671,6 +733,7 @@ def main():
 
     avatar = Avatar(os.path.join(BASE, "assets"))
     avatar.hide_after = float(cfg["hide_after_seconds"])
+    apply_user(cfg)
     capri = Capri(cfg)
     capri.summon.connect(avatar.summon)
     capri.vanish.connect(avatar.vanish)
@@ -708,11 +771,16 @@ def main():
         from sound_dialog import SoundDialog
         show_window("sound", lambda: SoundDialog(capri))
 
+    def open_profile():
+        from profile_dialog import ProfileDialog
+        show_window("profile", lambda: ProfileDialog(capri))
+
     menu = QMenu()
     for title, fn in (("Позвать Капри", capri.call_from_click),
                       ("Замолчать", capri.interrupt),
                       ("Написать команду…", ask_text),
                       ("Мои сайты, программы и ответы…", open_entries),
+                      ("Как ко мне обращаться…", open_profile),
                       ("Проверить ПК", lambda: capri.text_command("проверь компьютер")),
                       ("Спрятать", avatar.vanish),
                       ("MIC", None),
@@ -811,4 +879,10 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception as e:
+        log.exception("Капри упала при запуске")
+        fatal(f"Что-то сломалось при запуске: {e}\n\nПодробности — в файле capri.log в папке Капри.")
