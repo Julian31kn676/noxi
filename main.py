@@ -374,6 +374,12 @@ class Capri(QObject):
     def on_listener_error(self, err, kind="mic"):
         self.jobs.put(("say", line("model_broken" if kind == "model" else "no_mic")))
 
+    def set_search_when_unsure(self, on):
+        """Галочка в трее: открывать ли Google, когда Капри не знает ответа. Сразу и запоминается."""
+        self.cfg["search_when_unsure"] = bool(on)
+        save_setting("search_when_unsure", bool(on))
+        log.info("Поиск в браузере, если не знаю: %s", "включён" if on else "выключен")
+
     def _remember_model(self, name):
         """Ollama нашла другую скачанную модель — записываем её, чтобы не искать при каждом запуске."""
         self.cfg["local_model"] = name
@@ -628,6 +634,7 @@ def main():
                       ("Проверить ПК", lambda: capri.text_command("проверь компьютер")),
                       ("Спрятать", avatar.vanish),
                       ("MIC", None),
+                      ("SEARCH", None),
                       ("Открыть config.json", lambda: os.startfile(CONFIG_PATH)),
                       (None, None),
                       ("Выход", app.quit)):
@@ -653,6 +660,20 @@ def main():
                     a.triggered.connect(lambda _=False, v=value: capri.set_mic(v))
                     m.addAction(a)
             mic_menu.aboutToShow.connect(fill_mics)
+            continue
+        if title == "SEARCH":
+            # галочка: открывать ли Google, когда Капри не знает ответа (search_when_unsure)
+            search_act = QAction("Искать в браузере, если не знаю", menu)
+            search_act.setCheckable(True)
+            search_act.toggled.connect(capri.set_search_when_unsure)
+            menu.addAction(search_act)
+
+            def sync_search(a=search_act):
+                capri.reload_config_if_changed(speak=False)  # могли поменять в config.json руками
+                a.blockSignals(True)
+                a.setChecked(bool(capri.cfg.get("search_when_unsure", True)))
+                a.blockSignals(False)
+            menu.aboutToShow.connect(sync_search)
             continue
         act = QAction(title, menu)
         act.triggered.connect(fn)
