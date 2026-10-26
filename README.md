@@ -8,6 +8,7 @@
   <img alt="Голос на русском" src="https://img.shields.io/badge/голос-по--русски-ff2260?style=for-the-badge">
   <img alt="Офлайн" src="https://img.shields.io/badge/работает-офлайн-28ff96?style=for-the-badge&labelColor=0a0612">
   <img alt="Бесплатно" src="https://img.shields.io/badge/бесплатно-без%20ключей-00f0ff?style=for-the-badge&labelColor=0a0612">
+  <img alt="Лицензия MIT" src="https://img.shields.io/badge/лицензия-MIT-ff2260?style=for-the-badge&labelColor=0a0612">
 </p>
 
 <p align="center">
@@ -265,6 +266,17 @@ pip install torch --index-url https://download.pytorch.org/whl/cpu
 - Распознавание речи — офлайн (Vosk). С `use_google_stt` фраза после имени уточняется через Google.
 - Голос синтезируется сервисом Microsoft — отправляется только текст ответа Капри.
 - Разговоры с Ollama не покидают компьютер. Журнал и отчёты хранятся только локально.
+
+---
+
+## Лицензия
+
+Код Капри открыт под лицензией **[MIT](LICENSE)**: её можно свободно переделывать, выкладывать свои версии
+и использовать код в своих проектах. Единственное условие — сохранить файл `LICENSE` с именем автора.
+
+Лицензия не распространяется на:
+- **персонажа Капри и вселенную Cyberpunk: Edgerunners** — они принадлежат правообладателям;
+- **модель распознавания речи** в папке `bundled` — [Vosk](https://alphacephei.com/vosk/models) от Alpha Cephei, лицензия Apache 2.0.
 
 ---
 
