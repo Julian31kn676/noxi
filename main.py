@@ -38,7 +38,7 @@ try:
     from PySide6.QtWidgets import (QApplication, QHBoxLayout, QInputDialog, QLabel, QMenu, QSlider,
                                    QSystemTrayIcon, QWidget, QWidgetAction)
 
-    from actions import Actions, Reply
+    from actions import CAPRI_URL, Actions, Reply
     from ai import AI
     from local_ai import LocalAI
     from persona import LINES, gendered, line, set_user
@@ -788,6 +788,7 @@ def main():
                       ("MIC", None),
                       ("SEARCH", None),
                       ("Открыть config.json", lambda: os.startfile(CONFIG_PATH)),
+                      ("Капри на GitHub (обновления)…", lambda: capri.actions.web(CAPRI_URL)),
                       (None, None),
                       ("Выход", app.quit)):
         if title is None:
