@@ -260,8 +260,7 @@ class Capri(QObject):
         self.jobs.put(("say", line("greet") if self.cfg.get("greet_on_start") else "", "capri"))
         if CONFIG_ERROR:
             self.jobs.put(("say", CONFIG_ERROR))
-        if self.cfg.get("chatter"):
-            threading.Thread(target=self._chatter_loop, daemon=True).start()
+        threading.Thread(target=self._chatter_loop, daemon=True).start()  # сам проверяет, включено ли
 
     # ----- спонтанные появления -----
     def _chatter_loop(self):
@@ -272,6 +271,9 @@ class Capri(QObject):
         while True:
             time.sleep(15)
             now = time.time()
+            if not self.cfg.get("chatter"):  # выключено галочкой в трее — ждём, отсчёт начнётся заново
+                due = now + next_delay()
+                continue
             if now < due:
                 continue
             quiet = now - self.last_activity > 120 and self.jobs.empty() and not self.speaking
@@ -382,6 +384,12 @@ class Capri(QObject):
     def on_listener_error(self, err, kind="mic"):
         self.jobs.put(("say", line("model_broken" if kind == "model" else "no_mic")))
 
+    def set_chatter(self, on):
+        """Галочка в трее: появляется ли Капри сама (поболтать, погулять по экрану). Сразу и запоминается."""
+        self.cfg["chatter"] = bool(on)
+        save_setting("chatter", bool(on))
+        log.info("Самостоятельные появления: %s", "включены" if on else "выключены")
+
     def set_search_when_unsure(self, on):
         """Галочка в трее: открывать ли Google, когда Капри не знает ответа. Сразу и запоминается."""
         self.cfg["search_when_unsure"] = bool(on)
@@ -414,7 +422,7 @@ class Capri(QObject):
                 self.say(CONFIG_ERROR)
             return
         self.config_mtime = mtime
-        for key in ("sites", "apps", "app_aliases", "search_when_unsure", "browser"):
+        for key in ("sites", "apps", "app_aliases", "search_when_unsure", "browser", "chatter"):
             self.cfg[key] = fresh[key]
         self.actions.set_lists(self.cfg)
         log.info("config.json перечитан")
@@ -771,11 +779,18 @@ def main():
             search_act.toggled.connect(capri.set_search_when_unsure)
             menu.addAction(search_act)
 
-            def sync_search(a=search_act):
+            # галочка: появляется ли Капри сама время от времени (chatter)
+            chatter_act = QAction("Появляться самой", menu)
+            chatter_act.setCheckable(True)
+            chatter_act.toggled.connect(capri.set_chatter)
+            menu.addAction(chatter_act)
+
+            def sync_search(a=search_act, b=chatter_act):
                 capri.reload_config_if_changed(speak=False)  # могли поменять в config.json руками
-                a.blockSignals(True)
-                a.setChecked(bool(capri.cfg.get("search_when_unsure", True)))
-                a.blockSignals(False)
+                for act, key, default in ((a, "search_when_unsure", True), (b, "chatter", True)):
+                    act.blockSignals(True)
+                    act.setChecked(bool(capri.cfg.get(key, default)))
+                    act.blockSignals(False)
             menu.aboutToShow.connect(sync_search)
             continue
         act = QAction(title, menu)
