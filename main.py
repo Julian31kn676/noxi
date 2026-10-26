@@ -690,19 +690,21 @@ class Capri(QObject):
         if self.zapret_checked or not err or not zapret.NETWORK_ERROR.search(err) or not zapret.running():
             return
         self.zapret_checked = True
-        lists = zapret.find_lists()
-        if not lists:
+        all_lists = zapret.find_all_lists()
+        todo = [lst for lst in all_lists if not zapret.excluded(lst)]
+        if not all_lists:
             self.jobs.put(("say", line("zapret_manual")))
-        elif zapret.excluded(lists):
+        elif not todo:
             self.jobs.put(("say", line("zapret_restart")))
         else:
             def fix():
                 try:
-                    zapret.add_exclude(lists)
+                    for lst in todo:  # во все найденные копии zapret — какая из них запущена, не видно
+                        zapret.add_exclude(lst)
+                        log.info("Сервер голоса добавлен в исключения zapret (имя и адреса): %s", lst)
                 except OSError as e:
                     log.exception("Не удалось дописать исключение zapret")
                     return Reply(line("zapret_fail", e=e))
-                log.info("bing.com добавлен в исключения zapret: %s", lists)
                 return Reply(line("zapret_fixed"))
             self.actions.pending = fix
             self.awake_until = time.time() + 20  # ответ «да» без имени

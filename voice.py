@@ -88,6 +88,15 @@ def resolve_device(name):
     return None
 
 
+def _refresh_devices(sd):
+    """Перечитать список звуковых устройств (PortAudio запоминает его при старте)."""
+    try:
+        sd._terminate()
+        sd._initialize()
+    except Exception:
+        log.exception("Не удалось обновить список устройств")
+
+
 LEVEL_SCALE = 6.0  # громкость для индикатора: обычная речь у микрофона даёт примерно половину шкалы
 GATE_MAX = 0.35    # порог при самой низкой чувствительности — тише этого звук не слышен
 
@@ -142,6 +151,7 @@ class Listener(threading.Thread):
             log.exception("Модель распознавания не загрузилась")
             self.on_error(str(e), "model")
             return
+        worked = False  # микрофон уже хоть раз открылся
         while True:
             self.switch.clear()
             q = queue.Queue(maxsize=300)
@@ -161,6 +171,11 @@ class Listener(threading.Thread):
                     log.info("Микрофон %s не открылся (%s), беру по умолчанию", self.device_name, e)
                     self.device_name = None
                     continue
+                if worked:  # микрофон уже работал и пропал (сон, гарнитуру выдернули) — ждём, пока вернётся
+                    log.info("Микрофон пока не открывается (%s), пробую снова", e)
+                    time.sleep(3)
+                    _refresh_devices(sd)
+                    continue
                 log.exception("Ошибка микрофона")
                 self.on_error(str(e))
                 return
@@ -169,8 +184,11 @@ class Listener(threading.Thread):
             except Exception:
                 self.active_name = default_input_name()
             rec.Reset()
+            worked = True
             try:
-                self._listen(stream, q, rec)
+                if self._listen(stream, q, rec) == "stale":
+                    time.sleep(1)
+                    _refresh_devices(sd)  # список устройств мог поменяться — иначе откроем «мёртвый» микрофон
             except Exception as e:
                 log.exception("Ошибка микрофона/распознавания")
                 self.on_error(str(e))
@@ -181,10 +199,17 @@ class Listener(threading.Thread):
             log.info("Микрофон открыт: %s", self.active_name)
             buf = bytearray()
             was_muted = False
+            last_audio = time.time()
             while not self.switch.is_set():
                 try:
                     data = self.process(q.get(timeout=0.5))
+                    last_audio = time.time()
                 except queue.Empty:
+                    # звук приходит каждые 0,25 с даже в тишине; если его нет — микрофон отвалился
+                    # (сон компьютера, гарнитуру переподключили) — переоткрываем, иначе Капри «оглохнет» молча
+                    if time.time() - last_audio > 3:
+                        log.info("Микрофон перестал присылать звук — переоткрываю")
+                        return "stale"
                     continue
                 if self.muted.is_set():
                     was_muted = True
