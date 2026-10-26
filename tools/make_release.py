@@ -3,7 +3,8 @@
     python tools/make_release.py [куда_сохранить.zip]
 
 В архив не попадают: config.json (личные настройки), capri.log (журнал разговоров), reports/
-(отчёты о ПК), samples/ (образцы и чужие записи), models/ (скачивается через setup.bat), кэш Python."""
+(отчёты о ПК), samples/ (образцы и чужие записи), models/ (распаковывается из bundled/ через setup.bat),
+кэш Python."""
 import os
 import sys
 import zipfile
@@ -21,7 +22,8 @@ def main():
         for root, dirs, files in os.walk(BASE):
             dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
             for f in files:
-                if f in SKIP_FILES or f.lower().endswith(SKIP_EXT):
+                in_bundle = os.path.basename(root) == "bundled"  # модель распознавания речи — нужна
+                if f in SKIP_FILES or (f.lower().endswith(SKIP_EXT) and not in_bundle):
                     continue
                 full = os.path.join(root, f)
                 z.write(full, os.path.join("capri", os.path.relpath(full, BASE)))
