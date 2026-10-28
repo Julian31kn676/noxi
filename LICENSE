@@ -1,4 +1,122 @@
-MIT License
+Noxi Custom License (NCL-1.0)
+
+Copyright (c) 2026 Julian31kn676
+
+All rights reserved, subject to the permissions expressly granted below.
+
+## 1. Scope
+
+This license applies only to the original code, documentation, artwork, character designs, logos, and other materials created by Julian31kn676 specifically for the Noxi project ("Noxi Materials").
+
+This license does not replace, restrict, or revoke any license granted by the respective rights holders for third-party components incorporated into Noxi.
+
+In particular:
+
+- Original code derived from the Capri project by kystt29 remains subject to the MIT License under which it was originally distributed.
+- The Vosk speech recognition model `vosk-model-small-ru-0.22` by Alpha Cephei remains subject to the Apache License, Version 2.0.
+- Other third-party components remain subject to their respective licenses.
+
+## 2. Permission to Use and Modify
+
+Subject to the terms of this license, permission is granted to use, study, and modify the Noxi Materials for personal, educational, research, and other non-commercial purposes.
+
+Modifications are permitted provided that:
+
+1. The applicable copyright notices and attribution requirements are preserved.
+2. The modified materials remain subject to the restrictions of this license.
+3. The modifications do not violate the rights of other copyright holders.
+
+This permission does not grant the right to commercially exploit the Noxi Materials.
+
+## 3. Non-Commercial Use Only
+
+Commercial use of the Noxi Materials is prohibited without prior written permission from Julian31kn676.
+
+Commercial use includes, but is not limited to:
+
+- Selling the Noxi Materials or copies of them.
+- Selling modified versions or derivative works containing the Noxi Materials.
+- Including the Noxi Materials in a product or service offered for commercial gain.
+- Using the Noxi Materials in a commercial project or for paid services.
+
+Requests for commercial permission may be directed to Julian31kn676.
+
+These restrictions apply only to materials covered by this license and do not override permissions granted under applicable third-party licenses.
+
+## 4. Redistribution
+
+Redistribution of the Noxi Materials, in original or modified form, requires prior written permission from Julian31kn676, except for uses expressly permitted under Section 5.
+
+Any authorized redistribution must:
+
+1. Include this license.
+2. Preserve all applicable copyright notices.
+3. Clearly identify the original author, Julian31kn676.
+4. Identify significant modifications where applicable.
+5. Comply with all applicable third-party licenses.
+
+This section does not restrict redistribution of third-party components where their respective licenses permit it.
+
+## 5. Character, Artwork, and Logo
+
+The original Noxi character design, illustrations, images, and logo created by Julian31kn676 may be used and shared for non-commercial purposes provided that clear and appropriate attribution is given to Julian31kn676.
+
+Attribution should be included in the project description, credits, accompanying documentation, or another reasonably visible location.
+
+Commercial use of these materials requires prior written permission from Julian31kn676.
+
+Permission to use the Noxi character, artwork, or logo does not grant ownership of these materials or authorize others to claim them as their own creations.
+
+This section grants permission for the specified non-commercial uses notwithstanding the general redistribution restriction in Section 4. It does not grant permission to redistribute the complete Noxi software project without authorization.
+
+## 6. Attribution
+
+When using or modifying the Noxi Materials, users must retain appropriate copyright notices and provide attribution to:
+
+**Julian31kn676 — Creator of original Noxi Materials**
+
+Where applicable, users must also acknowledge the original Capri project by kystt29 and comply with its MIT License.
+
+Attribution does not imply endorsement by any author or rights holder.
+
+## 7. Third-Party Components
+
+This license does not replace or modify the terms governing third-party components.
+
+The original Capri code remains subject to its original MIT License, including the requirement to preserve the applicable copyright and permission notices in copies or substantial portions of that software.
+
+The Vosk model remains subject to the Apache License, Version 2.0, including its applicable notice, attribution, and redistribution requirements.
+
+Copies of the applicable third-party licenses and notices should be retained in the repository.
+
+## 8. Disclaimer of Warranty
+
+THE NOXI MATERIALS ARE PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+IN NO EVENT SHALL JULIAN31KN676 BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER LIABILITY ARISING FROM, OUT OF, OR IN CONNECTION WITH THE NOXI MATERIALS OR THEIR USE, EXCEPT WHERE SUCH LIABILITY CANNOT BE EXCLUDED UNDER APPLICABLE LAW.
+
+## 9. Reservation of Rights
+
+All rights not expressly granted under this license are reserved by Julian31kn676 with respect to the Noxi Materials.
+
+Nothing in this license grants ownership of third-party software, characters, trademarks, artwork, or other intellectual property.
+
+## 10. Contact and Additional Permissions
+
+For commercial licensing, redistribution permission, or other permissions not expressly granted by this license, contact Julian31kn676 through the contact information provided in the official Noxi repository.
+
+---
+
+**License identifier:** NCL-1.0  
+**Project:** Noxi  
+**Author:** Julian31kn676  
+**Year:** 2026
+
+
+======================================================================================
+
+
+Сapricorn MIT License
 
 Copyright (c) 2026 kystt29
 
