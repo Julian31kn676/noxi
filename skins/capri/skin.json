@@ -1,0 +1,43 @@
+{
+  "format": 1,
+  "id": "capri",
+  "name": "Капри",
+  "author": "Kystt29",
+  "wake_words": [
+    "капри",
+    "каприз",
+    "капре",
+    "кепри",
+    "капли",
+    "каприс",
+    "копри",
+    "кабри",
+    "капрэ"
+  ],
+  "address": "чумба",
+  "colors": {
+    "accent1": "#ff2260",
+    "accent2": "#28ff96",
+    "shadow": "#9646ff",
+    "highlight": "#00f0ff",
+    "bg": "#0a0612",
+    "panel": "#1a0a1e",
+    "field": "#120818",
+    "line": "#5a2a50",
+    "text": "#ffd2e1"
+  },
+  "images": {
+    "poses": [
+      "capri.png",
+      "capri_roam.png",
+      "каприии.png"
+    ],
+    "roam": "capri_roam.png",
+    "greeting_anim": "assets/anim/capri",
+    "thinking_anim": "assets/anim/eyes"
+  },
+  "persona": {
+    "gender": "female"
+  },
+  "voice": {}
+}
