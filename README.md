@@ -237,18 +237,6 @@ Claude умнее и видит свежие данные через веб-по
 </details>
 
 <details>
-<summary><b>Свои позы и анимации</b></summary>
-
-- **Позы** — картинки в `assets/poses` (PNG/WebP с прозрачным фоном). Капри меняет их каждые 12–30 секунд.
-  `capri_roam.png` — поза для прогулок.
-- **Анимации** — кадры в `assets/anim/capri` (машет рукой) и `assets/anim/eyes` (пока думает). Свои — из видео:
-  ```
-  python tools/convert_anim.py "видео.mp4" capri white
-  ```
-  Последнее слово — цвет фона в видео: `white`, `black` или `green`.
-</details>
-
-<details>
 <summary><b>Офлайн-голос Silero</b></summary>
 
 По умолчанию голос — синтезатор Microsoft (нужен интернет). Офлайн-вариант:
